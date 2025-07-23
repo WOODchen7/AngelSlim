@@ -183,7 +183,3 @@ def draw_bf16_fp8_weight_fig(bf16_path, fp8_path, save_path, layer_index):
         draw_hist(uniform_data, ax2, f'FP8_{op_name}')
 
         plt.savefig(os.path.join(save_path, f"./layer_{layer_index}_op_{op_name}_histogram.jpg"))
-
-
-
-
