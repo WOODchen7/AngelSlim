@@ -1,0 +1,34 @@
+# Global configuration of pipeline
+global:
+  save_path: /apdcephfs_gy4/share_302508627/woodchenwu/AngelSlim_output/hunyuan_4b_dense_psad_fp8
+
+# Simplified Configuration for LLM compression
+model:
+  name: HunyuanDense
+  model_path: /apdcephfs_gy4/share_302508627/darrenhu/llm/model/hy_open/4b/4b_dense_t1_v60/hf
+  trust_remote_code: true
+  low_cpu_mem_usage: true
+  use_cache: false
+  torch_dtype: auto
+  device_map: auto
+
+# Compression configuration
+compression:
+  name: PTQ
+  quantization:
+    name: fp8_psad     # Supported: fp8_static, fp8_dynamic, int4_awq, int4_gptq
+    bits: 8                # Quantization bits (4/8)
+    quant_method:
+      weight: "per-tensor"
+      activation: "per-tensor"
+    ignore_layers:         # Skip quantization for these layers
+      - "lm_head"
+      - "model.embed_tokens"
+
+# Dataset for calibration
+dataset:
+  name: TextDataset
+  data_path: /cfs_cloud_code/darrenhu/open_slim/angelslim_hy_git/AngelSlim/dataset/PTQ_data.jsonl
+  max_seq_length: 4096
+  num_samples: 32
+  batch_size: 1

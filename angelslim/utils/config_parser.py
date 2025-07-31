@@ -187,6 +187,7 @@ class SlimConfigParser:
         self.supported_quant_methods = [
             "fp8_static",
             "fp8_dynamic",
+            "fp8_psad",
             "int4_awq",
             "int4_gptq",
             "int8_dynamic",

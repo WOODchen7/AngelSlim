@@ -14,6 +14,7 @@
 
 from .awq.awq import AWQ  # noqa: F401
 from .fp8.fp8 import FP8  # noqa: F401
+from .fp8.psad_fp8 import PSAD_FP8  # noqa: F401
 from .gptq.gptq import GPTQ  # noqa: F401
 from .gptq.gptq_module import GPTQModule  # noqa: F401
 from .helper_layer import GPTQQuantLinear  # noqa: F401
