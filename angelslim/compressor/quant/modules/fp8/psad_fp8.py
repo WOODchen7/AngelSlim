@@ -106,7 +106,7 @@ class PSAD_FP8:
         layers[0] = layers[0].module
         print_info(self.inps.shape)
         outs = torch.zeros_like(self.inps)
-        # begin the awq process
+        # begin the dios process
         print_info("Ready.")
         layers = layers.cpu()
         torch.cuda.empty_cache()
@@ -191,20 +191,17 @@ class PSAD_FP8:
                 self.ptq_hook, layer, input_feat, layer_kwargs
             )
 
-
-            # TODO
             for scales in scales_list:
                 # print(type(scales[0]), scales[0])
                 for kn in scales[0]:
                     name = "model.layers.{}.{}".format(i, kn)
                     self.scales_dict[name] = scales[1]
-            #
 
             layers[i] = layers[i].cpu()
             layer = layer.cpu()
             torch.cuda.empty_cache()
             self.inps, outs = outs, self.inps
-            print_info("AWQ end layer {}\n".format(i))
+            print_info("DIOS FP8 end layer {}\n".format(i))
 
         print(self.scales_dict)
 
@@ -239,7 +236,7 @@ class PSAD_FP8:
                 sub_layer
             ].act_observer.scales()
             psad_scale = torch.clamp(
-                self.scales_dict.pop(name).squeeze().detach().to(old_scale.device), min=0, max=1)
+                self.scales_dict.pop(name).squeeze().detach().to(old_scale.device), min=0, max=99999)
 
             self.quant_model.act_scales_dict[name] = psad_scale
             print_info(f"{name} , {old_scale}, {old_scale / get_fp_maxval(bits=8).type(weight_scales.dtype).item()}, {psad_scale.item()}")

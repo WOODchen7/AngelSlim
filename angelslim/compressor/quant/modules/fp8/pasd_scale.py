@@ -13,13 +13,14 @@
 # limitations under the License.
 
 
-from .....utils import get_op_by_name, get_op_name, print_info, set_op_by_name
 import torch
+import functools
 import numpy as np
 from .....utils import print_info
 from ...core import mse_loss, get_fp_maxval
 from angelslim.compressor.quant.core.quant_func import quantize_weight_per_tensor_fp8, \
     tensor_quant_dequant_fp8
+from .....utils import get_op_by_name, get_op_name, print_info, set_op_by_name
 
 print_func = print_info
 
@@ -40,6 +41,7 @@ class AutoLayerScale:
         self.layer_count = 0
         self.observer_layer_classes = observer_layer_classes
         self.n_exponent = 5
+        self.search_step = 10
 
     def auto_scale(self, ptq_hook, module, input_feat, cache):
         print_info("[auto scale] start")
@@ -106,7 +108,9 @@ class AutoLayerScale:
             _auto_get_scale(
                 layer_name="attn.o",
                 layers=[module.self_attn.o_proj],
-                inp=input_feat["self_attn.o_proj"],
+                inp=input_feat["self_attn.q_proj"],
+                module2inspect=module.self_attn,
+                cache=cache,
             )
         )
 
@@ -127,7 +131,9 @@ class AutoLayerScale:
             _auto_get_scale(
                 layer_name="mlp.down_proj",
                 layers=[module.mlp.down_proj],
-                inp=input_feat["mlp.down_proj"],
+                inp=input_feat["mlp.gate_proj"],
+                module2inspect=module.mlp,
+                cache=cache,
             )
         )
         self.layer_count += 1
@@ -135,7 +141,7 @@ class AutoLayerScale:
         return scales_list
 
     def _get_out(self, layer_name, act, block, cache):
-        if "qkv" in layer_name:
+        if "att" in layer_name:
             return block(
                 act,
                 **cache
@@ -145,26 +151,54 @@ class AutoLayerScale:
 
     def psad_qdq_fp8_tensor(self, tensor, ratio):
         assert len(tensor.shape) == 1, f"tensor.device:{tensor.device}"
-        assert ratio in range(1,11)
-        #print(tensor.shape)
         w_scale = tensor.abs().max() / get_fp_maxval(bits=8)
 
         orig_fp8w, _ = quantize_weight_per_tensor_fp8(tensor, w_scale)
 
-        outlier_point = 0.999 + 0.0001 * ratio
+        outlier_point = 0.999 + 0.00005 * ratio
         n = min(round(len(tensor) * outlier_point), len(tensor) - 1)  # 0.001%0.001
         sorted_indices = torch.argsort(tensor.abs())
-        # descending_indices = sorted_indices[::-1]
         closest_indices = sorted_indices[n]
-        # cut_bf16_w = np_bf16_w[closest_indices]
-        # cut_qdq_fp8_weight = np_qdq_fp8_weight[closest_indices]
-        # # cut_qdqfp8w2 = np_qdqfp8w2[closest_indices]
 
         cut_np_fp8w1 = orig_fp8w[closest_indices].float().abs()
 
         adapt_scale = tensor.abs().max() / cut_np_fp8w1.type(tensor.dtype)
-        print(w_scale.item(), adapt_scale.item(), tensor.abs().max().item(), cut_np_fp8w1, outlier_point, n)
+        print_func(f"w_scale:{w_scale.item()}, adapt_scale:{adapt_scale.item()}, cut_np_fp8w1: {cut_np_fp8w1.item()}")
         return adapt_scale.to(tensor.dtype)
+
+    def psad_qdq_fp8_tensor_v2(self, tensor, ratio):
+        assert len(tensor.shape) == 1, f"tensor.device:{tensor.device}"
+        w_scale = tensor.abs().max() / get_fp_maxval(bits=8)
+
+        orig_fp8w, _ = quantize_weight_per_tensor_fp8(tensor, w_scale)
+
+        outlier_point = 0.999
+        n = min(round(len(tensor) * outlier_point), len(tensor) - 1)  # 0.001%0.001
+        sorted_indices = torch.argsort(tensor.abs())
+        closest_indices = sorted_indices[n]
+
+        cut_np_fp8w1 = max(orig_fp8w[closest_indices].float().abs(), get_fp_maxval(bits=8) / 7)
+
+        step = (get_fp_maxval(bits=8) - cut_np_fp8w1) / self.search_step
+        break_point = min(cut_np_fp8w1 + (step * (ratio+1)), get_fp_maxval(bits=8))
+
+        # FP8-list
+        # r_list = [22, 30, 44, 60, 88, 120, 176, 224, 288, 320, 352, 384, 416, 448]
+        # break_point = torch.tensor(r_list[ratio])
+
+        adapt_scale = tensor.abs().max() / break_point.type(tensor.dtype)
+        print_info(f"{w_scale.item()}, {adapt_scale.item()}, "
+                   f"{tensor.abs().max().item()}, "
+                   f"{break_point.type(tensor.dtype).item()}")
+        return adapt_scale.to(tensor.dtype)
+
+    def ados_input_hook(self, module, input, scale):
+        modified_input = tensor_quant_dequant_fp8(input[0], scale)
+        new_input = [modified_input]
+        for i in range(len(input)-1):
+            new_input.append(input[1+i])
+            exit()
+        return tuple(new_input)
 
     def search_by_block(
         self, layer_name, act_input, act_abs_max, layers, block, cache,
@@ -203,12 +237,19 @@ class AutoLayerScale:
             for layer in layers:
                 org_w.append(layer.weight.clone().cpu())
 
-            for ratio in range(4, 11):
-
+            for ratio in range(8, 21):
                 adapt_scale = self.psad_qdq_fp8_tensor(act.unsqueeze(0).view(-1), ratio).unsqueeze(0)
+                handles = []
+                for l in layers:
+                    handles.append(
+                        l.register_forward_pre_hook(
+                            functools.partial(
+                                self.ados_input_hook,
+                                scale=adapt_scale
+                            )
+                        )
+                    )
 
-                hook:
-                exit()
                 for j in range(act.shape[0]):
                     new_act = act[j, :, :].unsqueeze(0)
                     new_out[j, :, :] = self._get_out(layer_name, new_act, block, cache)
@@ -224,6 +265,9 @@ class AutoLayerScale:
                 for layer, w in zip(layers, org_w):
                     layer.weight.data.copy_(w)
 
+                for h in handles:
+                    h.remove()
+
         origin_out = origin_out.detach().cpu()
         new_out = w.detach().cpu()
         del origin_out
@@ -237,6 +281,6 @@ class AutoLayerScale:
             print_func("Cannot find better ratio.")
         else:
             print_func(
-                "Best ratio :{}, minimal loss : {}.".format(best_ratio, best_error)
+                "Best ratio :{}, minimal loss : {}, best_scales:{}.".format(best_ratio, best_error, best_scales)
             )
         return best_scales.detach().cpu()

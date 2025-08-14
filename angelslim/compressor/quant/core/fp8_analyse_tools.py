@@ -157,7 +157,7 @@ def get_weight_dict(model_path):
 def draw_hist(uniform_data, ax, name):
     uniform_data.sort()
     s = pd.Series(uniform_data)
-    ax.hist(s, bins=50, rwidth=1)
+    ax.hist(s, bins=1000)
     ax.set_title(name + "_histgram")
     ax.grid(True)
 
@@ -182,4 +182,4 @@ def draw_bf16_fp8_weight_fig(bf16_path, fp8_path, save_path, layer_index):
         uniform_data = np.array(fp8w)
         draw_hist(uniform_data, ax2, f'FP8_{op_name}')
 
-        plt.savefig(os.path.join(save_path, f"./layer_{layer_index}_op_{op_name}_histogram.jpg"))
+        plt.savefig(os.path.join(save_path, f"./layer_{layer_index}_op_{op_name}_histogram.png"))
