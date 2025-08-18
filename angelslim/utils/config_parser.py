@@ -396,6 +396,7 @@ class SlimConfigParser:
             ),
             dataset_config=None,
             global_config=global_config,
+            infer_config=None
         )
 
 
