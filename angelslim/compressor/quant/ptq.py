@@ -18,7 +18,7 @@ import torch.nn as nn
 from ...utils import find_parent_layer_and_sub_name, print_info
 from ..compressor_factory import CompressorFactory
 from .core import PTQHook
-from .modules import AWQ, FP8, GPTQ, INT8, SmoothQuant, ADOS_FP8
+from .modules import AWQ, FP8, GPTQ, INT8, SmoothQuant, DIOS_FP8
 
 __all__ = ["PTQ"]
 
@@ -69,8 +69,8 @@ class PTQ:
             max_seq_length = self.quant_model.quant_config.max_seq_length
             hidden_size = self.quant_model.quant_config.hidden_size
             model_arch_type = self.quant_model.quant_config.model_arch_type
-            if "ados" in self.quant_algo:
-                self.fp8 = ADOS_FP8(
+            if "dios" in self.quant_algo:
+                self.fp8 = DIOS_FP8(
                     self.ptq_hook,
                     self.quant_model,
                     seq_length=max_seq_length,
@@ -127,7 +127,7 @@ class PTQ:
             self.gptq.convert()
         elif "awq" in self.quant_algo:
             self.awq.convert()
-        elif "ados" in self.quant_algo:
+        elif "dios" in self.quant_algo:
             self.fp8.convert()
         else:
             if self.modal_type in ["LLM", "VLM"]:

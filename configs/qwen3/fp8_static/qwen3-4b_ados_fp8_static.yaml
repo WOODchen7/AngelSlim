@@ -16,7 +16,7 @@ model:
 compression:
   name: PTQ
   quantization:
-    name: fp8_ados
+    name: fp8_dios
     bits: 8
     quant_method:
       weight: "per-tensor"

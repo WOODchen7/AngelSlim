@@ -114,7 +114,7 @@ class AutoLayerScale:
         )
 
 
-        print_info("auto scale -> Denseados")
+        print_info("auto scale -> Densedios")
         # fc1
         scales_list.append(
             _auto_get_scale(
@@ -148,7 +148,7 @@ class AutoLayerScale:
         else:
             return block(act)[0].squeeze(1)
 
-    def ados_qdq_fp8_tensor(self, tensor, ratio):
+    def dios_qdq_fp8_tensor(self, tensor, ratio):
         assert len(tensor.shape) == 1, f"tensor.device:{tensor.device}"
         w_scale = tensor.abs().max() / get_fp_maxval(bits=8)
 
@@ -165,7 +165,7 @@ class AutoLayerScale:
         print_func(f"w_scale:{w_scale.item()}, adapt_scale:{adapt_scale.item()}, cut_np_fp8w1: {cut_np_fp8w1.item()}")
         return adapt_scale.to(tensor.dtype)
 
-    def ados_qdq_fp8_tensor_v2(self, tensor, ratio):
+    def dios_qdq_fp8_tensor_v2(self, tensor, ratio):
         assert len(tensor.shape) == 1, f"tensor.device:{tensor.device}"
         w_scale = tensor.abs().max() / get_fp_maxval(bits=8)
 
@@ -191,7 +191,7 @@ class AutoLayerScale:
                    f"{break_point.type(tensor.dtype).item()}")
         return adapt_scale.to(tensor.dtype)
 
-    def ados_input_hook(self, module, input, scale):
+    def dios_input_hook(self, module, input, scale):
         modified_input = tensor_quant_dequant_fp8(input[0], scale)
         new_input = [modified_input]
         for i in range(len(input)-1):
@@ -206,7 +206,7 @@ class AutoLayerScale:
         print_info(f"block:{block}")
         print_info(f"act_abs_max.shape:{act_abs_max.shape}")
         act = act_input
-        print_func("[ados search] search input of %s" % layer_name)
+        print_func("[dios search] search input of %s" % layer_name)
         best_error = float("inf")
         best_ratio = -1
         best_scales = None
@@ -237,13 +237,13 @@ class AutoLayerScale:
                 org_w.append(layer.weight.clone().cpu())
 
             for ratio in range(8, 21):
-                adapt_scale = self.ados_qdq_fp8_tensor(act.unsqueeze(0).view(-1), ratio).unsqueeze(0)
+                adapt_scale = self.dios_qdq_fp8_tensor(act.unsqueeze(0).view(-1), ratio).unsqueeze(0)
                 handles = []
                 for l in layers:
                     handles.append(
                         l.register_forward_pre_hook(
                             functools.partial(
-                                self.ados_input_hook,
+                                self.dios_input_hook,
                                 scale=adapt_scale
                             )
                         )
