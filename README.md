@@ -31,13 +31,12 @@
 - [技术交流](#技术交流)
 
 ## 📣最新进展
-
+- [25/08/06] 我们支持了`Hunyuan 0.5B/1.8B/4B/7B`和`Qwen2.5VL 3B/7B/32B/72B`的FP8、INT4量化，支持了`DeepSeek-R1/V3`和`Kimi-K2`模型的`FP8-Static`、`W4A8-FP8`量化。我们还开源了`Hunyuan 1.8B/4B/7B`系列模型的Eagle3权重。
 - [25/07/04] 我们支持了`Hunyuan/Qwen2.5/Qwen3/DeepSeek-R1-Distill-Qwen`等模型的量化，包含INT8、FP8、INT4等算法。
 我们还开源了`Qwen3`系列模型的Eagle3权重。
 
 Coming soon：
-- [ ] DeepSeek-R1的W4A8量化支持
-- [ ] 多模态Qwen-VL模型的量化支持
+- [ ] Diffusion模型压缩支持
 - [ ] 投机采样新算法发布
 
 ## 🌟主要特性
@@ -53,8 +52,8 @@ Coming soon：
 
 | 模型名      | FP8-Dynamic       | FP8-Static        | INT8-Dynamic | INT4-GPTQ         | INT4-AWQ          |
 | ---------- | ----------------- | ----------------- | ----------------- | ----------------- | ----------------- |
-| [Hunyuan-Dense](https://huggingface.co/tencent/Hunyuan-7B-Instruct)   |      ✅           |         ✅           | ✅           |    ✅               |         [ ]           |
-| [Hunyuan-MoE](https://huggingface.co/collections/tencent/hunyuan-a13b-685ec38e5b46321e3ea7c4be)   |      ✅           |         ✅           | ✅           |    ✅               |         [ ]           |
+| [Hunyuan-Dense](https://huggingface.co/collections/tencent/hunyuan-dense-model-6890632cda26b19119c9c5e7)   |      ✅           |         ✅           | ✅           |    ✅               |         ✅           |
+| [Hunyuan-MoE](https://huggingface.co/collections/tencent/hunyuan-a13b-685ec38e5b46321e3ea7c4be)   |      ✅           |         ✅           | ✅           |    ✅               |         ✅           |
 | [Qwen3-Dense](https://huggingface.co/collections/AngelSlim/qwen3-quant-68652e26da31740739d154f8)               |      ✅           |         ✅           | ✅           |    ✅               |         ✅           |
 | [Qwen3-MoE](https://huggingface.co/collections/AngelSlim/qwen3-quant-68652e26da31740739d154f8)            |      ✅           |         ✅           | ✅           |     ✅             |        ✅            |
 | [Qwen2.5](https://huggingface.co/collections/AngelSlim/qwen2-25-quant-68652d6cbdf5c0d4b1c4499a)            |      ✅           |         ✅           | ✅           |     ✅             |        ✅            |
@@ -62,16 +61,22 @@ Coming soon：
 | [QwQ](https://huggingface.co/collections/AngelSlim/qwen3-quant-68652e26da31740739d154f8) |      ✅           |         ✅           |       ✅             | ✅           |       ✅            |
 
 ### 投机采样
-目前已开源Qwen3系列模型的Eagle3权重。
 
-| 模型名     |      Eagle3       |
-| ----------| ----------------- |
-| [Qwen3-1.7B](https://huggingface.co/AngelSlim/Qwen3-1.7B_eagle3)    |      ✅           |
-| [Qwen3-4B](https://huggingface.co/AngelSlim/Qwen3-4B_eagle3)        |      ✅           |
-| [Qwen3-8B](https://huggingface.co/AngelSlim/Qwen3-8B_eagle3)        |      ✅           |
-| [Qwen3-14B](https://huggingface.co/AngelSlim/Qwen3-14B_eagle3)      |      ✅           |
-| [Qwen3-32B](https://huggingface.co/AngelSlim/Qwen3-32B_eagle3)      |      ✅           |
-| [Qwen3-30B-A3B](https://huggingface.co/AngelSlim/Qwen3-a3B_eagle3)  |      ✅           |
+#### Eagle3
+目前已开源Qwen3和Hunyuan系列模型的Eagle3权重。
+
+| Qwen3  Models   | Hunyuan Models     |
+| ----------|----------|
+| ✅ [Qwen3-1.7B](https://huggingface.co/AngelSlim/Qwen3-1.7B_eagle3)    |✅ [Hunyuan-1.8B-Instruct](https://huggingface.co/AngelSlim/Hunyuan-1.8B-Instruct_eagle3)    |
+| ✅ [Qwen3-4B](https://huggingface.co/AngelSlim/Qwen3-4B_eagle3)        |✅ [Hunyuan-4B-Instruct](https://huggingface.co/AngelSlim/Hunyuan-4B-Instruct_eagle3)        |
+| ✅ [Qwen3-8B](https://huggingface.co/AngelSlim/Qwen3-8B_eagle3)        |✅ [Hunyuan-7B-Instruct](https://huggingface.co/AngelSlim/Hunyuan-7B-Instruct_eagle3)        |
+| ✅ [Qwen3-14B](https://huggingface.co/AngelSlim/Qwen3-14B_eagle3)      |
+| ✅ [Qwen3-32B](https://huggingface.co/AngelSlim/Qwen3-32B_eagle3)      |
+| ✅ [Qwen3-30B-A3B](https://huggingface.co/AngelSlim/Qwen3-a3B_eagle3)  |
+
+
+
+
 
 ## 🛎️如何使用
 
@@ -183,14 +188,49 @@ bash deploy/lm_eval.sh $MODEL_PATH
 
 #### Hunyuan系列模型
 
-Hunyuan-A13B-Instruct的`BF16`、`FP8`、`INT4-GPTQ`在`AIME 2024`、`GSM8K`、`BBH`、`DROP`上的评测结果如下：
+Hunyuan-Instruct的`BF16`、`FP8`、`INT4-GPTQ`、`INT4-AWQ`在`OlympiadBench`、`AIME 2024`、`DROP`、`GPQA-Diamond`上的评测结果如下：
 
-|   Bench   | Hunyuan-A13B-Instruct | Hunyuan-A13B-Instruct-FP8 | Hunyuan-A13B-Instruct-Int4-GPTQ | 
-|:---------:|:---------------------:|:-------------------------:|:-------------------------------:|
-| AIME 2024 |         87.30         |           86.70           |              86.70              |
-|   GSM8K   |         94.39         |           94.01           |              94.24              |
-|    BBH    |         89.10         |           88.34           |              87.91              |
-|   DROP    |         91.10         |           91.10           |              91.05              |
+<table>
+  <thead>
+    <tr><th>Model</th><th>Quantization</th><th>OlympiadBench</th><th>AIME 2024</th><th>DROP</th><th>GPQA-Diamond</th></tr>
+  </thead>
+  <tbody>
+    <tr><td rowspan="4">Hunyuan-A13B-Instruct</td>
+    <td>BF16</td><td>82.7</td><td>87.30</td><td>91.1</td><td>71.2</td></tr>
+    <tr><td>FP8-Static</td><td>83.0</td><td>86.7</td><td>91.1</td><td>-</td></tr>
+    <tr><td>Int4-GPTQ</td><td>82.7</td><td>86.7</td><td>91.1</td><td>-</td></tr>
+    <tr><td>Int4-AWQ</td><td>82.6</td><td>85.6</td><td>91.0</td><td>-</td></tr>
+  </tbody>
+  <tbody>
+    <tr><td rowspan="4">Hunyuan-7B-Instruct</td>
+    <td>BF16</td>          <td>76.5</td><td>81.1</td><td>85.9</td><td>60.1</td></tr>
+    <tr><td>FP8-Static</td><td>76.6</td><td>80.9</td><td>86.0</td><td>60.1</td></tr>
+    <tr><td>Int4-GPTQ</td><td>76.2</td><td>81.0</td><td>85.7</td><td>60.0</td></tr>
+    <tr><td>Int4-AWQ</td><td>76.4</td><td>80.9</td><td>85.9</td><td>60.1</td></tr>
+  </tbody>
+  <tbody>
+    <tr><td rowspan="4">Hunyuan-4B-Instruct</td>
+    <td>BF16</td>          <td>73.1</td><td>78.3</td><td>78.2</td><td>61.1</td></tr>
+    <tr><td>FP8-Static</td><td>73.1</td><td>76.6</td><td>78.3</td><td>60.2</td></tr>
+    <tr><td>Int4-GPTQ</td><td>72.9</td><td>-</td><td>78.1</td><td>58.1</td></tr>
+    <tr><td>Int4-AWQ</td><td>72.8</td><td>-</td><td>78.2</td><td>-</td></tr>
+  </tbody>
+  <tbody>
+    <tr><td rowspan="4">Hunyuan-1.8B-Instruct</td>
+    <td>BF16</td>          <td>63.4</td><td>56.7</td><td>76.7</td><td>47.2</td></tr>
+    <tr><td>FP8-Static</td><td>62.5</td><td>55.2</td><td>75.1</td><td>47.7</td></tr>
+    <tr><td>Int4-GPTQ</td><td>60.9</td><td>-</td><td>73.0</td><td>44.4</td></tr>
+    <tr><td>Int4-AWQ</td><td>61.7</td><td>-</td><td>71.7</td><td>43.6</td></tr>
+  </tbody>
+  <tbody>
+    <tr><td rowspan="4">Hunyuan-0.5B-Instruct</td>
+    <td>BF16</td>          <td>29.6</td><td>17.2</td><td>52.8</td><td>23.3</td></tr>
+    <tr><td>FP8-Static</td><td>29.6</td><td>17.2</td><td>51.6</td><td>22.5</td></tr>
+    <tr><td>Int4-GPTQ</td><td>26.8</td><td>-</td><td>50.9</td><td>23.3</td></tr>
+    <tr><td>Int4-AWQ</td><td>26.3</td><td>-</td><td>48.9</td><td>23.3</td></tr>
+  </tbody>
+</table>
+
 
 #### Qwen3系列模型
 
@@ -238,6 +278,66 @@ Qwen3系列模型的`BF16`、`FP8-Static`、`FP8-Dynamic`、`INT8-Dynamic`、`IN
   </tbody>
 </table>
 
+#### Qwen2.5VL系列模型
+
+Qwen2.5VL系列模型的`BF16`、`FP8-Static`、`FP8-Dynamic`、`INT4-GPTQ`、`INT4-AWQ`在`MMMU_VAL`、`DocVQA_VAL`、`ChartQA_TEST`上的评测结果如下：
+
+<table>
+  <thead>
+    <tr><th>Model</th><th>Quantization</th><th>MMMU_VAL</th><th>MMLDocVQA_VALU</th><th>ChartQA_TEST</th></tr>
+  </thead>
+  <tbody>
+    <tr><td rowspan="5">Qwen2.5VL-3B</td><td>BF16</td><td>47.11</td><td>78.57</td><td>80.32</td></tr>
+    <tr><td>FP8-Static</td><td>47.33</td><td>79.34</td><td>79.68</td></tr>
+    <tr><td>FP8-Dynamic</td><td>45.99</td><td>46.93</td><td>38.29</td></tr>
+    <tr><td>INT4-GPTQ</td><td>46.56</td><td>77.20</td><td>78.96</td></tr>
+    <tr><td>INT4-AWQ</td><td>45.78</td><td>-</td><td>79.60</td></tr>
+   <tr><td rowspan="5">Qwen2.5VL-7B</td><td>BF16</td><td>45.44</td><td>89.71</td><td>84.64</td></tr>
+    <tr><td>FP8-Static</td><td>47.00</td><td>89.83</td><td>85.92</td></tr>
+    <tr><td>FP8-Dynamic</td><td>47.22</td><td>89.80</td><td>88.64</td></tr>
+    <tr><td>INT4-GPTQ</td><td>46.67</td><td>90.45</td><td>-</td></tr>
+    <tr><td>INT4-AWQ</td><td>45.67</td><td>89.28</td><td>-</td></tr>
+    <tr><td rowspan="5">Qwen2.5VL-32B</td><td>BF16</td><td>57.00</td><td>90.03</td><td>-</td></tr>
+    <tr><td>FP8-Static</td><td>57.00</td><td>89.88</td><td>-</td></tr>
+    <tr><td>FP8-Dynamic</td><td>56.44</td><td>89.88</td><td>-</td></tr>
+    <tr><td>INT4-GPTQ</td><td>55.22</td><td>89.80 </td><td>-</td></tr>
+    <tr><td>INT4-AWQ</td><td>55.22</td><td>90.30</td><td>-</td></tr>
+    <tr><td rowspan="5">Qwen2.5VL-72B</td><td>BF16</td><td>58.78</td><td>94.39</td><td>85.60</td></tr>
+    <tr><td>FP8-Static</td><td>57.89</td><td>94.41</td><td>85.84</td></tr>
+    <tr><td>FP8-Dynamic</td><td>58.67</td><td>94.38</td><td>85.60</td></tr>
+    <tr><td>INT4-GPTQ</td><td>57.56</td><td>94.46</td><td>86.48</td></tr>
+    <tr><td>INT4-AWQ</td><td>58.78</td><td>94.19</td><td>87.28</td></tr>
+  </tbody>
+</table>
+
+#### DeepSeek系列模型
+
+DeepSeek-R1-0528模型的`FP8-Block-Wise`、`W4A8-FP8`在`GPQA Diamond`、`AIME 2024`、`SimpleQA`、`LiveCodeBench`上的评测结果如下：
+
+<table>
+  <thead>
+    <tr><th>Model</th><th>Quantization</th><th>GPQA Diamond</th><th>AIME 2024</th><th>SimpleQA</th><th>LiveCodeBench</th></tr>
+  </thead>
+  <tbody>
+    <tr><td rowspan="6">DeepSeek-R1-0528</td><td>FP8-Block-Wise</td><td>78.28</td><td>88.67</td><td>27.8</td><td>77.1</td></tr>
+    <tr><td>W4A8-FP8</td><td>77.37</td><td>88.67</td><td>26.83</td><td>78.86</td></tr>
+  </tbody>
+</table>
+
+> **备注**：
+> - 以上评测结果使用TRT-LLM框架部署测试5次求平均
+> - 评测时使用的超参如下:
+> ```json
+>{
+>  "top_k": 20,
+>  "top_p": 0.6,
+>  "temperature": 0.7,
+>  "output_seq_len": 32768,
+>  "max_input_seq_len": 16384
+>}
+>```
+
+
 #### 其他模型
 
 其他模型的`BF16`、`FP8-Static`、`FP8-Dynamic`、`INT4-GPTQ`、`INT4-AWQ`在`CEVAL`、`MMLU`、`GSM8K`上的评测结果如下：
@@ -279,6 +379,7 @@ Qwen3系列模型的`BF16`、`FP8-Static`、`FP8-Dynamic`、`INT8-Dynamic`、`IN
 </table>
 
 ### （2）投机采样
+#### Qwen3 Series Models
 Qwen3系列的Eagle3模型在MT-bench/HunmanEval/GSM8K/Alpaca上的加速结果如下：
 
 <table>
@@ -312,6 +413,32 @@ Qwen3系列的Eagle3模型在MT-bench/HunmanEval/GSM8K/Alpaca上的加速结果�
   </tbody>
 </table>
 
+Hunyuan系列的Eagle3模型在MT-bench/HunmanEval/GSM8K/Alpaca上的加速结果如下：
+
+<table>
+  <thead>
+    <tr>
+        <th>&nbsp</th><th>&nbsp</th>
+        <th colspan="2" style="text-align: center; vertical-align: middle;">MT-bench</th>
+        <th colspan="2" style="text-align: center; vertical-align: middle;">HumanEval</th>
+        <th colspan="2" style="text-align: center; vertical-align: middle;">GSM8K</th>
+        <th colspan="2" style="text-align: center; vertical-align: middle;">Alpaca</th>
+        <th colspan="2" style="text-align: center; vertical-align: middle;">Mean</th></tr>
+    <tr><th>Temperature</th><th>Model</th><th>Speedup</th><th>τ</th><th>Speedup</th><th>τ</th><th>Speedup</th><th>τ</th><th>Speedup</th><th>τ</th><th>Speedup</th><th>τ</th></tr>
+  </thead>
+  <tbody>
+    <!-- <tr><td colspan="12" style="text-align: center; vertical-align: middle;"><strong>Temperature=0</strong></td></tr> -->
+    <tr><td rowspan="3"><strong>T=0</strong></td>
+    <td>Hunyuan-1.8B-Instruct</td><td>1.97x</td><td>2.90</td><td>2.58x</td><td>3.73</td><td>2.61x</td><td>3.71</td><td>1.71x</td><td>2.43</td><td>2.22x</td><td>3.19</td></tr>
+    <tr> <td>Hunyuan-4B-Instruct</td><td>1.77x</td><td>2.60</td><td>2.64x</td><td>3.35</td><td>2.14x</td><td>3.17</td><td>1.72x</td><td>2.57</td><td>2.07x</td><td>2.92</td></tr>
+    <tr><td>Hunyuan-7B-Instruct</td><td>2.22x</td><td>3.58</td><td>3.59x</td><td>5.47</td><td>2.96x</td><td>4.68</td><td>1.64x</td><td>2.56</td><td>2.60x</td><td>4.07</td></tr>
+    <!-- <tr><td colspan="12" style="text-align: center; vertical-align: middle;"><strong>Temperature=1</strong></td></tr> -->
+    <tr><td rowspan="3"><strong>T=1</strong></td>
+    <td>Hunyuan-1.8B-Instruct</td><td>1.58x</td><td>2.36</td><td>2.35x</td><td>3.56</td><td>2.23x</td><td>3.38</td><td>1.26x</td><td>1.87</td><td>1.86x</td><td>2.79</td></tr>
+    <tr><td>Hunyuan-4B-Instruct</td><td>1.36x</td><td>2.05</td><td>1.97x</td><td>2.86</td><td>1.72x</td><td>2.68</td><td>1.14x</td><td>1.76</td><td>1.55x</td><td>2.34</td></tr>
+    <tr><td>Hunyuan-7B-Instruct</td><td>1.90x</td><td>3.11</td><td>3.12x</td><td>5.09</td><td>2.74x</td><td>4.34</td><td>1.47x</td><td>2.39</td><td>2.31x</td><td>3.73</td></tr>
+  </tbody>
+</table>
 
 ## 📝许可协议
 本项目的代码依照 [License for AngelSlim](LICENSE) 协议开源。

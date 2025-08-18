@@ -31,13 +31,11 @@ Dedicated to building a more intuitive, comprehensive, and efficient LLMs compre
 - [Technical Discussion](#technical-discussion)
 
 ## 📣Latest Updates
-
+- [25/08/06] We now support quantization for `Hunyuan 0.5B/1.8B/4B/7B` and multimodal model `Qwen2.5VL 3B/7B/32B/72B`, including `FP8/INT4` algorithms, and quantization for `DeepSeek-R1/V3` and `Kimi-K2`, including `FP8-Static` and `W4A8-FP8` algorithms. We also opensource `Hunyuan 1.8B/4B/7B` series Eagle3 model weight.
 - [25/07/04] We now support quantization for `Hunyuan/Qwen2.5/Qwen3/DeepSeek-R1-Distill-Qwen` and other models, including `INT8/FP8/INT4` algorithms. We also opensource `Qwen3` series Eagle3 model weight.
 
 Coming soon:
-
-- [ ] Support W4A8 quantization for DeepSeek-R1.
-- [ ] Support quantization for multimodal models like Qwen-VL.
+- [ ] Diffusion model compression support.
 - [ ] Release of new algorithm for speculative sampling.
 
 ## 🌟Key Features
@@ -53,7 +51,7 @@ Currently supports the following LLMs, including Hunyuan-Dense, Hunyuan-MoE, Qwe
 
 | Model | FP8-Dynamic | FP8-Static | INT8-Dynamic | INT4-GPTQ | INT4-AWQ |
 | --------------------------------------------------------------------------------------------------------------------------- | ----------- | ---------- | ------------ | --------- | -------- |
-| [Hunyuan-Dense](https://huggingface.co/tencent/Hunyuan-7B-Instruct)                                                         | ✅           | ✅          | ✅            | ✅         | ✅        |
+| [Hunyuan-Dense](https://huggingface.co/collections/tencent/hunyuan-dense-model-6890632cda26b19119c9c5e7)                                                         | ✅           | ✅          | ✅            | ✅         | ✅        |
 | [Hunyuan-MoE](https://huggingface.co/collections/tencent/hunyuan-a13b-685ec38e5b46321e3ea7c4be)                             | ✅           | ✅          | ✅            | ✅         | ✅        |
 | [Qwen3-Dense](https://huggingface.co/collections/AngelSlim/qwen3-quant-68652e26da31740739d154f8)                            | ✅           | ✅          | ✅            | ✅         | ✅        |
 | [Qwen3-MoE](https://huggingface.co/collections/AngelSlim/qwen3-quant-68652e26da31740739d154f8)                              | ✅           | ✅          | ✅            | ✅         | ✅        |
@@ -62,16 +60,18 @@ Currently supports the following LLMs, including Hunyuan-Dense, Hunyuan-MoE, Qwe
 | [QwQ](https://huggingface.co/collections/AngelSlim/qwen3-quant-68652e26da31740739d154f8)                                    | ✅           | ✅          | ✅            | ✅         | ✅        |
 
 ### Speculative Decoding
+
+#### Eagle3
 The Eagle3 weights for the Qwen3 series model are now available.
 
-| Model     |      Eagle3       | 
-| ----------| ----------------- | 
-| [Qwen3-1.7B](https://huggingface.co/AngelSlim/Qwen3-1.7B_eagle3)    |      ✅           |
-| [Qwen3-4B](https://huggingface.co/AngelSlim/Qwen3-4B_eagle3)        |      ✅           |
-| [Qwen3-8B](https://huggingface.co/AngelSlim/Qwen3-8B_eagle3)        |      ✅           |
-| [Qwen3-14B](https://huggingface.co/AngelSlim/Qwen3-14B_eagle3)      |      ✅           |
-| [Qwen3-32B](https://huggingface.co/AngelSlim/Qwen3-32B_eagle3)      |      ✅           |
-| [Qwen3-30B-A3B](https://huggingface.co/AngelSlim/Qwen3-a3B_eagle3)  |      ✅           |
+| Qwen3  Models   | Hunyuan Models     |
+| ----------|----------|
+| ✅ [Qwen3-1.7B](https://huggingface.co/AngelSlim/Qwen3-1.7B_eagle3)    |✅ [Hunyuan-1.8B-Instruct](https://huggingface.co/AngelSlim/Hunyuan-1.8B-Instruct_eagle3)    |
+| ✅ [Qwen3-4B](https://huggingface.co/AngelSlim/Qwen3-4B_eagle3)        |✅ [Hunyuan-4B-Instruct](https://huggingface.co/AngelSlim/Hunyuan-4B-Instruct_eagle3)        |
+| ✅ [Qwen3-8B](https://huggingface.co/AngelSlim/Qwen3-8B_eagle3)        |✅ [Hunyuan-7B-Instruct](https://huggingface.co/AngelSlim/Hunyuan-7B-Instruct_eagle3)        |
+| ✅ [Qwen3-14B](https://huggingface.co/AngelSlim/Qwen3-14B_eagle3)      |
+| ✅ [Qwen3-32B](https://huggingface.co/AngelSlim/Qwen3-32B_eagle3)      |
+| ✅ [Qwen3-30B-A3B](https://huggingface.co/AngelSlim/Qwen3-a3B_eagle3)  |
 
 ## 🛎️How to Use
 
@@ -186,14 +186,48 @@ The performance test results for selected models are shown below. For the comple
 
 #### Hunyuan Series Models
 
-Benchmark results for the `Hunyuan-A13B-Instruct` model with `FP8` and `INT4-GPTQ` quantization algorithms on datasets including `AIME 2024`, `GSM8K`, `BBH`, and `DROP`:
+Benchmark results for the `Hunyuan-Instruct` model with `FP8`, `INT4-AWQ` and `INT4-GPTQ` quantization algorithms on datasets including`OlympiadBench`, `AIME 2024` and `DROP`:
 
-|   Bench   | Hunyuan-A13B-Instruct | Hunyuan-A13B-Instruct-FP8 | Hunyuan-A13B-Instruct-Int4-GPTQ | 
-|:---------:|:---------------------:|:-------------------------:|:-------------------------------:|
-| AIME 2024 |         87.3          |           86.7            |              86.7               |
-|   GSM8K   |         94.39         |           94.01           |              94.24              |
-|    BBH    |         89.1          |           88.34           |              87.91              |
-|   DROP    |         91.1          |           91.1            |              91.05              |
+<table>
+  <thead>
+    <tr><th>Model</th><th>Quantization</th><th>OlympiadBench</th><th>AIME 2024</th><th>DROP</th><th>GPQA-Diamond</th></tr>
+  </thead>
+  <tbody>
+    <tr><td rowspan="4">Hunyuan-A13B-Instruct</td>
+    <td>BF16</td><td>82.7</td><td>87.30</td><td>91.1</td><td>71.2</td></tr>
+    <tr><td>FP8-Static</td><td>83.0</td><td>86.7</td><td>91.1</td><td>-</td></tr>
+    <tr><td>Int4-GPTQ</td><td>82.7</td><td>86.7</td><td>91.1</td><td>-</td></tr>
+    <tr><td>Int4-AWQ</td><td>82.6</td><td>85.6</td><td>91.0</td><td>-</td></tr>
+  </tbody>
+  <tbody>
+    <tr><td rowspan="4">Hunyuan-7B-Instruct</td>
+    <td>BF16</td>          <td>76.5</td><td>81.1</td><td>85.9</td><td>60.1</td></tr>
+    <tr><td>FP8-Static</td><td>76.6</td><td>80.9</td><td>86.0</td><td>60.1</td></tr>
+    <tr><td>Int4-GPTQ</td><td>76.2</td><td>81.0</td><td>85.7</td><td>60.0</td></tr>
+    <tr><td>Int4-AWQ</td><td>76.4</td><td>80.9</td><td>85.9</td><td>60.1</td></tr>
+  </tbody>
+  <tbody>
+    <tr><td rowspan="4">Hunyuan-4B-Instruct</td>
+    <td>BF16</td>          <td>73.1</td><td>78.3</td><td>78.2</td><td>61.1</td></tr>
+    <tr><td>FP8-Static</td><td>73.1</td><td>76.6</td><td>78.3</td><td>60.2</td></tr>
+    <tr><td>Int4-GPTQ</td><td>72.9</td><td>-</td><td>78.1</td><td>58.1</td></tr>
+    <tr><td>Int4-AWQ</td><td>72.8</td><td>-</td><td>78.2</td><td>-</td></tr>
+  </tbody>
+  <tbody>
+    <tr><td rowspan="4">Hunyuan-1.8B-Instruct</td>
+    <td>BF16</td>          <td>63.4</td><td>56.7</td><td>76.7</td><td>47.2</td></tr>
+    <tr><td>FP8-Static</td><td>62.5</td><td>55.2</td><td>75.1</td><td>47.7</td></tr>
+    <tr><td>Int4-GPTQ</td><td>60.9</td><td>-</td><td>73.0</td><td>44.4</td></tr>
+    <tr><td>Int4-AWQ</td><td>61.7</td><td>-</td><td>71.7</td><td>43.6</td></tr>
+  </tbody>
+  <tbody>
+    <tr><td rowspan="4">Hunyuan-0.5B-Instruct</td>
+    <td>BF16</td>          <td>29.6</td><td>17.2</td><td>52.8</td><td>23.3</td></tr>
+    <tr><td>FP8-Static</td><td>29.6</td><td>17.2</td><td>51.6</td><td>22.5</td></tr>
+    <tr><td>Int4-GPTQ</td><td>26.8</td><td>-</td><td>50.9</td><td>23.3</td></tr>
+    <tr><td>Int4-AWQ</td><td>26.3</td><td>-</td><td>48.9</td><td>23.3</td></tr>
+  </tbody>
+</table>
 
 #### Qwen3 Series Models
 
@@ -241,6 +275,65 @@ Benchmark results for Qwen3 series models with `FP8-Static`, `FP8-Dynamic`, `INT
   </tbody>
 </table>
 
+#### Qwen2.5VL Series Models
+
+Benchmark results for Qwen2.5VL series models with `BF16`、`FP8-Static`、`FP8-Dynamic`、`INT4-GPTQ`、`INT4-AWQ` quantization algorithms on datasets including `MMMU_VAL`、`DocVQA_VAL` and `ChartQA_TEST`：
+
+<table>
+  <thead>
+    <tr><th>Model</th><th>Quantization</th><th>MMMU_VAL</th><th>MMLDocVQA_VALU</th><th>ChartQA_TEST</th></tr>
+  </thead>
+  <tbody>
+    <tr><td rowspan="5">Qwen2.5VL-3B</td><td>BF16</td><td>47.11</td><td>78.57</td><td>80.32</td></tr>
+    <tr><td>FP8-Static</td><td>47.33</td><td>79.34</td><td>79.68</td></tr>
+    <tr><td>FP8-Dynamic</td><td>45.99</td><td>46.93</td><td>38.29</td></tr>
+    <tr><td>INT4-GPTQ</td><td>46.56</td><td>77.20</td><td>78.96</td></tr>
+    <tr><td>INT4-AWQ</td><td>45.78</td><td>-</td><td>79.60</td></tr>
+   <tr><td rowspan="5">Qwen2.5VL-7B</td><td>BF16</td><td>45.44</td><td>89.71</td><td>84.64</td></tr>
+    <tr><td>FP8-Static</td><td>47.00</td><td>89.83</td><td>85.92</td></tr>
+    <tr><td>FP8-Dynamic</td><td>47.22</td><td>89.80</td><td>88.64</td></tr>
+    <tr><td>INT4-GPTQ</td><td>46.67</td><td>90.45</td><td>-</td></tr>
+    <tr><td>INT4-AWQ</td><td>45.67</td><td>89.28</td><td>-</td></tr>
+    <tr><td rowspan="5">Qwen2.5VL-32B</td><td>BF16</td><td>57.00</td><td>90.03</td><td>-</td></tr>
+    <tr><td>FP8-Static</td><td>57.00</td><td>89.88</td><td>-</td></tr>
+    <tr><td>FP8-Dynamic</td><td>56.44</td><td>89.88</td><td>-</td></tr>
+    <tr><td>INT4-GPTQ</td><td>55.22</td><td>89.80 </td><td>-</td></tr>
+    <tr><td>INT4-AWQ</td><td>55.22</td><td>90.30</td><td>-</td></tr>
+    <tr><td rowspan="5">Qwen2.5VL-72B</td><td>BF16</td><td>58.78</td><td>94.39</td><td>85.60</td></tr>
+    <tr><td>FP8-Static</td><td>57.89</td><td>94.41</td><td>85.84</td></tr>
+    <tr><td>FP8-Dynamic</td><td>58.67</td><td>94.38</td><td>85.60</td></tr>
+    <tr><td>INT4-GPTQ</td><td>57.56</td><td>94.46</td><td>86.48</td></tr>
+    <tr><td>INT4-AWQ</td><td>58.78</td><td>94.19</td><td>87.28</td></tr>
+  </tbody>
+</table>
+
+#### DeepSeek Series Models
+
+Benchmark results for DeepSeek-R1-0528 series models with `FP8-Block-Wise` and `W4A8-FP8` quantization algorithms on datasets including `GPQA Diamond`、`AIME 2024`、`SimpleQA` and `LiveCodeBench`：
+
+<table>
+  <thead>
+    <tr><th>Model</th><th>Quantization</th><th>GPQA Diamond</th><th>AIME 2024</th><th>SimpleQA</th><th>LiveCodeBench</th></tr>
+  </thead>
+  <tbody>
+    <tr><td rowspan="6">DeepSeek-R1-0528</td><td>FP8-Block-Wise</td><td>78.28</td><td>88.67</td><td>27.8</td><td>77.1</td></tr>
+    <tr><td>W4A8-FP8</td><td>77.37</td><td>88.67</td><td>26.83</td><td>78.86</td></tr>
+  </tbody>
+</table>
+
+> **Note**：
+> - The above results are based on the average of 5 test runs deployed with TRT-LLM
+> - The hyperparameters used during evaluation are as follows:
+> ```json
+>{
+>  "top_k": 20,
+>  "top_p": 0.6,
+>  "temperature": 0.7,
+>  "output_seq_len": 32768,
+>  "max_input_seq_len": 16384
+>}
+>```
+
 #### Other Models
 
 Benchmark results for other models with `FP8-Static`, `FP8-Dynamic`, `INT4-GPTQ`, and `INT4-AWQ` quantization algorithms on datasets including `CEVAL`, `MMLU` and `GSM8K`:
@@ -282,6 +375,8 @@ Benchmark results for other models with `FP8-Static`, `FP8-Dynamic`, `INT4-GPTQ`
 </table>
 
 ### (2) Speculative Decoding
+
+#### Qwen3 Series Models
 Benchmark results for Qwen3 series models with `Eagle3` speculative decoding algorithm on datasets including `MT-bench`, `HunmanEval`, `GSM8K`, and `Alpaca`:
 
 <table>
@@ -315,6 +410,33 @@ Benchmark results for Qwen3 series models with `Eagle3` speculative decoding alg
   </tbody>
 </table>
 
+#### Hunyuan Series Models
+Benchmark results for Hunyuan series models with `Eagle3` speculative decoding algorithm on datasets including `MT-bench`, `HunmanEval`, `GSM8K`, and `Alpaca`:
+
+<table>
+  <thead>
+    <tr>
+        <th>&nbsp</th><th>&nbsp</th>
+        <th colspan="2" style="text-align: center; vertical-align: middle;">MT-bench</th>
+        <th colspan="2" style="text-align: center; vertical-align: middle;">HumanEval</th>
+        <th colspan="2" style="text-align: center; vertical-align: middle;">GSM8K</th>
+        <th colspan="2" style="text-align: center; vertical-align: middle;">Alpaca</th>
+        <th colspan="2" style="text-align: center; vertical-align: middle;">Mean</th></tr>
+    <tr><th>Temperature</th><th>Model</th><th>Speedup</th><th>τ</th><th>Speedup</th><th>τ</th><th>Speedup</th><th>τ</th><th>Speedup</th><th>τ</th><th>Speedup</th><th>τ</th></tr>
+  </thead>
+  <tbody>
+    <!-- <tr><td colspan="12" style="text-align: center; vertical-align: middle;"><strong>Temperature=0</strong></td></tr> -->
+    <tr><td rowspan="3"><strong>T=0</strong></td>
+    <td>Hunyuan-1.8B-Instruct</td><td>1.97x</td><td>2.90</td><td>2.58x</td><td>3.73</td><td>2.61x</td><td>3.71</td><td>1.71x</td><td>2.43</td><td>2.22x</td><td>3.19</td></tr>
+    <tr> <td>Hunyuan-4B-Instruct</td><td>1.77x</td><td>2.60</td><td>2.64x</td><td>3.35</td><td>2.14x</td><td>3.17</td><td>1.72x</td><td>2.57</td><td>2.07x</td><td>2.92</td></tr>
+    <tr><td>Hunyuan-7B-Instruct</td><td>2.22x</td><td>3.58</td><td>3.59x</td><td>5.47</td><td>2.96x</td><td>4.68</td><td>1.64x</td><td>2.56</td><td>2.60x</td><td>4.07</td></tr>
+    <!-- <tr><td colspan="12" style="text-align: center; vertical-align: middle;"><strong>Temperature=1</strong></td></tr> -->
+    <tr><td rowspan="3"><strong>T=1</strong></td>
+    <td>Hunyuan-1.8B-Instruct</td><td>1.58x</td><td>2.36</td><td>2.35x</td><td>3.56</td><td>2.23x</td><td>3.38</td><td>1.26x</td><td>1.87</td><td>1.86x</td><td>2.79</td></tr>
+    <tr><td>Hunyuan-4B-Instruct</td><td>1.36x</td><td>2.05</td><td>1.97x</td><td>2.86</td><td>1.72x</td><td>2.68</td><td>1.14x</td><td>1.76</td><td>1.55x</td><td>2.34</td></tr>
+    <tr><td>Hunyuan-7B-Instruct</td><td>1.90x</td><td>3.11</td><td>3.12x</td><td>5.09</td><td>2.74x</td><td>4.34</td><td>1.47x</td><td>2.39</td><td>2.31x</td><td>3.73</td></tr>
+  </tbody>
+</table>
 
 ## 📝 License
 

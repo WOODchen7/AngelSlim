@@ -35,8 +35,11 @@ class GPTQ:
         super(GPTQ, self).__init__()
         self.model = model
         self.modal_type = self.model.modal_type
-        self.layers = self.model.model.model.layers
-        self.layers_block_name = "model.layers"
+        if self.modal_type == "VLM":
+            self.layers = self.model.model.model.language_model.layers
+        else:
+            self.layers = self.model.model.model.layers
+        self.layers_block_name = self.model.block_name
         self.quant_bits = self.model.quant_config.quant_bit
         self.group_size = self.model.quant_config.quant_algo_info["group_size"]
         self.ignore_layers = self.model.quant_config.quant_algo_info["ignore_layers"]
@@ -65,26 +68,26 @@ class GPTQ:
         )
         cache = {"i": 0}
 
-        self.model.model.model.embed_tokens = self.model.model.model.embed_tokens.to(
-            dev
-        )
+        pre_transformer_modules_dict = self.model.get_pre_transformer_modules()
+        for _, module in pre_transformer_modules_dict.items():
+            module.to(dev)
         layers[0] = layers[0].to(dev)
         layers[0] = Catcher(layers[0], inps, cache)
         # get modle input in dataloader
         self.model.model_forward(dataloader)
         layer_kwargs = layers[0].layer_kwargs
-        print_info("layer_kwargs = :{}".format(layer_kwargs))
 
-        print_info("[SLIM] cache['i']:{}".format(cache["i"]))
+        print_info("cache['i']:{}".format(cache["i"]))
 
         layers[0] = layers[0].module
-        self.model.model.model.embed_tokens.cpu()
+        for _, module in pre_transformer_modules_dict.items():
+            module.cpu()
         layers[0].cpu()
         torch.cuda.empty_cache()
 
         outs = torch.zeros_like(inps)
         # begin the gptq process
-        print_info("[SLIM] Ready.")
+        print_info("Ready.")
 
         layers = layers.cpu()
 
@@ -93,7 +96,7 @@ class GPTQ:
             subset = self._find_layers(layer)
             print_info("subset:{}".format(subset))
             self.gptq = {}
-            print_info("[SLIM] GPTQMoe start layer {}".format(i))
+            print_info("GPTQMoe start layer {}".format(i))
             for name in subset:
                 if name in self.ignore_layers:
                     continue
@@ -116,14 +119,14 @@ class GPTQ:
                         hidden_states=inps[j, :, :].unsqueeze(0), **layer_kwargs
                     )[0].squeeze(1)
 
-            print_info("[SLIM] HOOK Step{}".format(j))
+            print_info("HOOK Step{}".format(j))
             for h in handles:
                 h.remove()
 
             for name in subset:
                 if name in self.ignore_layers:
                     continue
-                print_info("[SLIM] Quant {} ...".format(name))
+                print_info("Quant {} ...".format(name))
                 scale, zero, g_idx = self.gptq[name].fasterquant(
                     percdamp=self.percdamp,
                     group_size=self.group_size,
@@ -151,13 +154,13 @@ class GPTQ:
             # del gptq
             torch.cuda.empty_cache()
             inps, outs = outs, inps
-            print_info("[SLIM] GPTQ end layer {}\n".format(i))
+            print_info("GPTQ end layer {}\n".format(i))
 
         # inps = inps.cpu()
         # outs = outs.cpu()
         del inps, outs
         torch.cuda.empty_cache()
-        print_info("[SLIM] GPTQ done.")
+        print_info("GPTQ done.")
 
     def _make_quant(
         self,
@@ -219,7 +222,6 @@ class GPTQ:
                 )
                 qlayers[name].pack(layers[name], scale, zero, g_idx)
                 qlayers[name].to(layer_device)
-
         print_info("Model packed.")
 
     def _convert_llm(self):
@@ -236,7 +238,7 @@ class GPTQ:
         Saves scales and inserts QDQ modules.
         """
         print_info("Start convert model...")
-        if self.modal_type in ["LLM", "TTS"]:
+        if self.modal_type in ["LLM", "VLM"]:
             self._convert_llm()
         elif self.modal_type == "AIGC":
             pass
@@ -293,6 +295,12 @@ class GPTQ:
         )
         # self.model.model.config.torch_dtype = "float16"
         self.model.model.config.to_json_file(os.path.join(save_dir, "config.json"))
+
+        # save processor and tokenizer
+        if self.modal_type == "VLM" and self.model.processor is not None:
+            self.model.processor.save_pretrained(save_dir)
+        if self.modal_type in ["LLM", "VLM"]:
+            self.model.tokenizer.save_pretrained(save_dir)
 
     def _recurse_setattr(self, module, name, value):
         """A function to recursively set attributes to a module."""

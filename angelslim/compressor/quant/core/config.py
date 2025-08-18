@@ -66,7 +66,7 @@ class QuantConfig:
             is_dynamic = "dynamic" if "dynamic" in self.quant_algo else "static"
             assert (
                 is_dynamic or act_quant_method is not None
-            ), "[OpenSlim][Error] fp8_static need act_quant_method"
+            ), "[Error] fp8_static need act_quant_method"
             self.act_observer = (
                 ACT_OBSERVERS_CLASS[act_quant_method]
                 if "static" in is_dynamic
@@ -74,21 +74,36 @@ class QuantConfig:
             )
             self.weight_observer = WEIGHT_OBSERVERS_CLASS[weight_quant_method]
             self.kv_cache_observer = None
-            self.quant_algo_info = {
-                "w": f"fp8_{weight_quant_method}",
-                "ignore_layers": quantization_args.ignore_layers,
-            }
+
+            if "w4a8" in self.quant_algo:
+                group_size = (
+                    128
+                    if quantization_args.quant_method["group_size"] == -1
+                    else quantization_args.quant_method["group_size"]
+                )
+                self.quant_algo_info = {
+                    "w": f"int4_{weight_quant_method}",
+                    "w_group_size": group_size,
+                    "ignore_layers": quantization_args.ignore_layers,
+                }
+            else:
+                self.quant_algo_info = {
+                    "w": f"fp8_{weight_quant_method}",
+                    "ignore_layers": quantization_args.ignore_layers,
+                }
+
             if act_quant_method is not None:
                 self.quant_algo_info["a"] = f"fp8_{act_quant_method}-{is_dynamic}"
             self.hidden_size = global_config.hidden_size
             self.model_arch_type = global_config.model_arch_type
             self.low_memory = config.quantization.low_memory
             self.quant_analyse = config.quantization.quant_analyse
+            self.quant_vit = config.quantization.quant_vit
         elif "int8" in self.quant_algo:
             is_dynamic = "dynamic" if "dynamic" in self.quant_algo else "static"
             assert (
                 is_dynamic or act_quant_method is not None
-            ), "[OpenSlim][Error] int8_static need act_quant_method"
+            ), "[Error] int8_static need act_quant_method"
             self.act_observer = (
                 ACT_OBSERVERS_CLASS[act_quant_method]
                 if "static" in is_dynamic
@@ -122,6 +137,7 @@ class QuantConfig:
             }
             self.hidden_size = global_config.hidden_size
             self.model_arch_type = global_config.model_arch_type
+            self.low_memory = config.quantization.low_memory
         elif "int4_gptq" in self.quant_algo:
             self.act_observer = None
             self.weight_observer = None

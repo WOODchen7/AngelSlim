@@ -40,7 +40,7 @@ class PTQ:
         self.layers = self.quant_model.get_model()
         self.quant_algo = self.quant_model.quant_config.quant_algo
         self.quant_helpers = self.quant_model.quant_config.quant_helpers
-        if self.modal_type in ["LLM", "TTS"]:
+        if self.modal_type in ["LLM", "VLM"]:
             # Add ptq observer hook
             self.ptq_hook = PTQHook(self.quant_model)
             self.ptq_hook.apply_hook()
@@ -63,6 +63,7 @@ class PTQ:
                 model_arch_type=model_arch_type,
                 mse_range=self.quant_model.quant_config.quant_algo_info["mse_range"],
                 observer_layer_classes=[nn.Linear],
+                low_memory=self.quant_model.quant_config.low_memory,
             )
         if "fp8" in self.quant_algo:
             max_seq_length = self.quant_model.quant_config.max_seq_length
@@ -129,7 +130,7 @@ class PTQ:
         elif "psad" in self.quant_algo:
             self.fp8.convert()
         else:
-            if self.modal_type in ["LLM", "TTS"]:
+            if self.modal_type in ["LLM", "VLM"]:
                 if "smooth" in self.quant_helpers:
                     self.smooth.convert()
                 self._convert_llm()

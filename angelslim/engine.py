@@ -19,7 +19,6 @@ from dataclasses import asdict, dataclass
 from typing import Any, Optional
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from .compressor import CompressorFactory
 from .data.dataloader import DataLoaderFactory
@@ -32,6 +31,7 @@ DEFAULT_COMPRESSION_CONFIG = {
     "int8_dynamic": default_compress_config.default_int8_dynamic_config(),
     "int4_awq": default_compress_config.default_int4_awq_config(),
     "int4_gptq": default_compress_config.default_int4_gptq_config(),
+    "w4a8_fp8": default_compress_config.default_w4a8_fp8_static_config(),
 }
 
 
@@ -44,51 +44,81 @@ class Engine:
         """
         Initialize engine configuration
         """
-        self.model = None
+        self.slim_model = None
         self.tokenizer = None
         self.dataloader = None
         self.compressor = None
-        self.slim_model = None
         self.compress_type = None
+        self.model_path = None
+        self.max_seq_length = None
 
     def prepare_model(
         self,
         model_name="Qwen",
+        model=None,
+        tokenizer=None,
         model_path=None,
         torch_dtype="auto",
         device_map="auto",
         trust_remote_code=True,
         low_cpu_mem_usage=True,
         use_cache=False,
+        cache_dir=None,
         deploy_backend="vllm",
-    ) -> AutoModelForCausalLM:
-        """Load pretrained model and tokenizer"""
+        using_multi_nodes=False,
+    ) -> Any:
+        """Load pretrained model and tokenizer
+        Args:
+            model_name (str): Name of the model to load.
+            model (Any, optional): Preloaded model instance.
+                If provided, `model_path` is ignored.
+            tokenizer (Any, optional): Preloaded tokenizer instance.
+                If model is set, tokenizer must be also set in LLM and VLM.
+            model_path (str, optional): Path to the pretrained model.
+            torch_dtype (str): Data type for the model weights.
+            device_map (str): Device map for the model.
+            trust_remote_code (bool): Whether to trust remote code.
+            low_cpu_mem_usage (bool): Whether to use low CPU memory usage mode.
+            use_cache (bool): Whether to use cache during loading.
+            cache_dir (str, optional): Directory to cache the model.
+            deploy_backend (str): Backend for deployment, e.g., "torch", "vllm".
+            using_multi_nodes (bool): Whether to use multi-nodes for calibration.
+        """
         assert model_name, "model_name must be specified."
         assert model_path, "model_path must be specified."
-        assert deploy_backend in [
-            "vllm",
-            "huggingface",
-        ], "deploy_backend must be vllm or huggingface"
-
-        # Load model
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_path,
-            torch_dtype=torch_dtype,
-            device_map=device_map,
-            trust_remote_code=trust_remote_code,
-            low_cpu_mem_usage=low_cpu_mem_usage,
-            use_cache=use_cache,
-        )
-
-        # Load tokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            model_path, trust_remote_code=trust_remote_code
-        )
 
         # Initialize slim model by ModelFactory
         self.slim_model = SlimModelFactory.create(
-            model_name, model=self.model, deploy_backend=deploy_backend
+            model_name, model=model, deploy_backend=deploy_backend
         )
+
+        self.series = SlimModelFactory.get_series_by_models(model_name)
+
+        if self.series in ["LLM", "VLM"]:
+            if model:
+                assert tokenizer, " If model is set, tokenizer must be also set."
+                self.slim_model.tokenizer = tokenizer
+            else:
+                self.slim_model.from_pretrained(
+                    model_path,
+                    torch_dtype=torch_dtype,
+                    device_map=device_map,
+                    trust_remote_code=trust_remote_code,
+                    low_cpu_mem_usage=low_cpu_mem_usage,
+                    use_cache=use_cache,
+                    using_multi_nodes=using_multi_nodes,
+                )
+                self.model_path = model_path
+        elif self.series == "Diffusion":
+            if not model:
+                self.slim_model.from_pretrained(
+                    model_path,
+                    torch_dtype=torch_dtype,
+                    cache_dir=cache_dir,
+                )
+        else:
+            raise ValueError(f"Unsupported series: {self.series}")
+
         return self.slim_model
 
     def prepare_data(
@@ -111,14 +141,19 @@ class Engine:
         # Dynamically create dataloader by DataLoaderFactory
         self.dataloader = DataLoaderFactory.create_data_loader(
             data_type=data_type,
-            processor=self.tokenizer,
-            device=self.model.device,
+            processor=(
+                self.slim_model.processor
+                if self.series == "VLM"
+                else self.slim_model.tokenizer
+            ),
+            device=self.slim_model.model.device,
             max_length=max_length,
             batch_size=batch_size,
             shuffle=shuffle,
             num_samples=num_samples,
             data_source=data_path,
         )
+        self.max_seq_length = max_length
 
         return self.dataloader
 
@@ -143,6 +178,9 @@ class Engine:
                 f"Compression method '{compress_name}' not registered. "
                 f"Available methods: {CompressorFactory.get_available_compressor()}"
             )
+        if self.series in ["LLM", "VLM"]:
+            global_config.update(self.model_path, self.max_seq_length)
+
         if default_method:
             assert (
                 default_method in DEFAULT_COMPRESSION_CONFIG
@@ -189,9 +227,6 @@ class Engine:
         # Save quantized model
         self.compressor.save(save_path)
 
-        # Save tokenizer
-        self.tokenizer.save_pretrained(save_path)
-
         # Save all config
         if config is not None:
             config_dict = asdict(config)
@@ -204,7 +239,31 @@ class Engine:
                     torch.version.cuda if torch.cuda.is_available() else None
                 ),
             }
+            config_dict["model_config"]["model_path"] = "Base Model Path"
+            config_dict["global_config"]["save_path"] = "Save Model Path"
             with open(os.path.join(save_path, "angelslim_config.json"), "w") as f:
                 json.dump(config_dict, f, indent=4)
 
         print_info(f"Compressed model saved to {save_path}")
+
+    def infer(self, input_prompt: str, **kwargs) -> Any:
+        """Run inference with the compressed model
+        Args:
+            input_prompt (str): Input prompt for the model.
+        """
+        if not self.slim_model or not self.slim_model.model:
+            raise RuntimeError("Model not initialized. Call prepare_model() first")
+
+        if self.series in ["LLM", "VLM"]:
+            return self.slim_model.generate(
+                input_ids=self.slim_model.tokenizer(
+                    input_prompt, return_tensors="pt"
+                ).input_ids,
+                **kwargs,
+            )
+        elif self.series == "Diffusion":
+            return self.slim_model.generate(input_prompt, **kwargs)
+        else:
+            raise NotImplementedError(
+                f"Series {self.series} is not implemented for inference"
+            )

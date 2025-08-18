@@ -43,6 +43,7 @@ class AWQ:
         observer_layer_classes=None,
         smooth_all_linears=False,
         merge_samples=False,
+        low_memory=False,
     ):
         """
         Args:
@@ -59,7 +60,10 @@ class AWQ:
         super(AWQ, self).__init__()
         self.model = model
         self.modal_type = self.model.modal_type
-        self.layers = self.model.model.model.layers
+        if self.modal_type == "VLM":
+            self.layers = self.model.model.model.language_model.layers
+        else:
+            self.layers = self.model.model.model.layers
         self.quant_bits = self.model.quant_config.quant_bit
         self.group_size = self.model.quant_config.quant_algo_info["group_size"]
         self.zero_point = self.model.quant_config.quant_algo_info["zero_point"]
@@ -70,6 +74,7 @@ class AWQ:
         self.observer_layer_classes = observer_layer_classes
         self.smooth_all_linears = smooth_all_linears
         self.merge_samples = merge_samples
+        self.low_memory = low_memory
         self._init_linear_list_and_model_type()
         self.scale_function = AutoLayerScale(
             weight_bits=self.quant_bits,
@@ -78,6 +83,7 @@ class AWQ:
             merge_samples=merge_samples,
             model_type=self.model_arch_type,
             observer_layer_classes=observer_layer_classes,
+            low_memory=low_memory,
         )
         self.clip_function = AutoLayerClip(
             weight_bits=self.quant_bits,
@@ -112,11 +118,13 @@ class AWQ:
         )
         cache = {"i": 0}
         layers[0] = layers[0].to(dev)
-        self.model.model.model.embed_tokens = self.model.model.model.embed_tokens.to(
-            dev
-        )
+        pre_transformer_modules_dict = self.model.get_pre_transformer_modules()
+        for _, module in pre_transformer_modules_dict.items():
+            module.to(dev)
         layers[0] = Catcher(layers[0], self.inps, cache)
         self.model.model_forward(dataloader)
+        for _, module in pre_transformer_modules_dict.items():
+            module.cpu()
         layer_kwargs = layers[0].layer_kwargs
         for k, v in layer_kwargs.items():
             # position embeddings
@@ -150,11 +158,12 @@ class AWQ:
                 )
 
             layer = layers[i].to(dev)
-            outs = outs.to(dev)
-            self.inps = self.inps.to(dev)
+            if not self.low_memory:
+                outs = outs.to(dev)
+                self.inps = self.inps.to(dev)
             subset = self._find_layers(layer)
 
-            if self.model_arch_type == "qwen3_moe":
+            if self.model_arch_type in ["qwen3_moe", "hunyuan_v1_moe"]:
                 subset = {
                     **subset,
                     "mlp": layer.mlp,
@@ -182,9 +191,33 @@ class AWQ:
             # being hook
             for j in range(min(self.inps.shape[0], nsamples)):
                 with torch.no_grad():
-                    outs[j, :, :] = layer(
-                        hidden_states=self.inps[j, :, :].unsqueeze(0), **layer_kwargs
-                    )[0].squeeze(1)
+                    outs[j, :, :] = (
+                        layer(
+                            hidden_states=self.inps[j, :, :].unsqueeze(0).to(dev),
+                            **layer_kwargs,
+                        )[0]
+                        .squeeze(1)
+                        .to(self.inps.device)
+                    )
+
+            # remove duplicate
+            def deduplicate_tensors(tensor_list):
+                unique_tensors = []
+                assert len(tensor_list) % 2 == 0
+                for i in range(int(len(tensor_list) / 2)):
+                    if torch.equal(tensor_list[i * 2], tensor_list[i * 2 + 1]):
+                        unique_tensors.append(tensor_list[i * 2])
+                    else:
+                        raise ValueError
+                for tensor in tensor_list:
+                    if not any(torch.equal(tensor, t) for t in unique_tensors):
+                        unique_tensors.append(tensor)
+                return unique_tensors
+
+            for k, v in input_feat.items():
+                if len(v) > nsamples:
+                    print_info(f"Warning: repetition hook {k}")
+                    input_feat[k] = deduplicate_tensors(v)
 
             print_info("HOOK Step{}".format(j))
             for h in handles:
@@ -237,15 +270,11 @@ class AWQ:
             "group_size": self.group_size,
             "bits": self.quant_bits,
             "version": "gemm",
-            "modules_to_not_convert": None,
+            "modules_to_not_convert": ["visual"] if self.modal_type == "VLM" else None,
         }
         self.model.model.config.save_pretrained(
             save_dir, state_dict=EmptyModule().state_dict()
         )
-
-        # # Vision transformers have a processor
-        # if self.processor is not None:
-        #     self.processor.save_pretrained(save_dir)
 
         # Remove empty state dict
         default_paths = [
@@ -267,6 +296,12 @@ class AWQ:
         self.model.model.config.torch_dtype = "float16"
         self.model.model.config.to_json_file(os.path.join(save_dir, "config.json"))
 
+        # save processor and tokenizer
+        if self.modal_type == "VLM" and self.model.processor is not None:
+            self.model.processor.save_pretrained(save_dir)
+        if self.modal_type in ["LLM", "VLM"]:
+            self.model.tokenizer.save_pretrained(save_dir)
+
     def _find_layers(self, module, layers=None, name=""):
         if not layers:
             layers = self.isinstance_list
@@ -285,6 +320,8 @@ class AWQ:
 
     def _apply_quant(self, module, named_linears: Dict[str, nn.Linear]):
         for name, linear_layer in named_linears.items():
+            if "mlp.gate." in name:
+                continue
             # NOTE: small regression in perplexity if linear layer uses .cpu().float()
             linear_layer = linear_layer.to(get_best_device()).half()
 
@@ -324,7 +361,7 @@ class AWQ:
         Saves scales and inserts QDQ modules.
         """
         print_info("Start convert model...")
-        if self.modal_type in ["LLM", "TTS"]:
+        if self.modal_type in ["LLM", "VLM"]:
             self._convert_llm()
         elif self.modal_type == "AIGC":
             pass
