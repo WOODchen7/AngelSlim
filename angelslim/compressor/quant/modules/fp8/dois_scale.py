@@ -13,16 +13,19 @@
 # limitations under the License.
 
 
-import torch
 import functools
-import numpy as np
-from .....utils import print_info
-from ...core import mse_loss, get_fp_maxval
-from angelslim.compressor.quant.core.quant_func import quantize_weight_per_tensor_fp8, \
-    tensor_quant_dequant_fp8
-from .....utils import get_op_by_name, get_op_name, print_info, set_op_by_name
+import torch
+
+from angelslim.compressor.quant.core.quant_func import (
+    quantize_weight_per_tensor_fp8,
+    tensor_quant_dequant_fp8,
+)
+
+from .....utils import get_op_name, print_info
+from ...core import get_fp_maxval, mse_loss
 
 print_func = print_info
+
 
 class AutoLayerScale:
     def __init__(
@@ -32,8 +35,7 @@ class AutoLayerScale:
         model_type="dense",
         observer_layer_classes=None,
     ):
-        """
-        """
+        """ """
         self.loss_function = loss_function
         self.merge_samples = merge_samples
         self.model_type = model_type
@@ -45,9 +47,7 @@ class AutoLayerScale:
     def auto_scale(self, ptq_hook, module, input_feat, cache):
         print_info("[auto scale] start")
 
-        def _auto_get_scale(
-                layer_name, layers, inp, module2inspect=None, cache=None
-        ):
+        def _auto_get_scale(layer_name, layers, inp, module2inspect=None, cache=None):
             if module2inspect is None:
                 assert len(layers) == 1
                 module2inspect = layers[0]
@@ -102,7 +102,6 @@ class AutoLayerScale:
         )
 
         # attention output
-        # if module.self_attn.v_proj.weight.shape == module.self_attn.o_proj.weight.shape:
         scales_list.append(
             _auto_get_scale(
                 layer_name="attn.o",
@@ -113,8 +112,7 @@ class AutoLayerScale:
             )
         )
 
-
-        print_info("auto scale -> Densedios")
+        print_info("auto scale -> Densedois")
         # fc1
         scales_list.append(
             _auto_get_scale(
@@ -141,14 +139,11 @@ class AutoLayerScale:
 
     def _get_out(self, layer_name, act, block, cache):
         if "att" in layer_name:
-            return block(
-                act,
-                **cache
-            )[0].squeeze(1)
+            return block(act, **cache)[0].squeeze(1)
         else:
             return block(act)[0].squeeze(1)
 
-    def dios_qdq_fp8_tensor(self, tensor, ratio):
+    def dois_qdq_fp8_tensor(self, tensor, ratio):
         assert len(tensor.shape) == 1, f"tensor.device:{tensor.device}"
         w_scale = tensor.abs().max() / get_fp_maxval(bits=8)
 
@@ -162,10 +157,13 @@ class AutoLayerScale:
         cut_np_fp8w1 = orig_fp8w[closest_indices].float().abs()
 
         adapt_scale = tensor.abs().max() / cut_np_fp8w1.type(tensor.dtype)
-        print_func(f"w_scale:{w_scale.item()}, adapt_scale:{adapt_scale.item()}, cut_np_fp8w1: {cut_np_fp8w1.item()}")
+        print_func(
+            f"w_scale:{w_scale.item()}, adapt_scale:{adapt_scale.item()},"
+            f" cut_np_fp8w1: {cut_np_fp8w1.item()}"
+        )
         return adapt_scale.to(tensor.dtype)
 
-    def dios_qdq_fp8_tensor_v2(self, tensor, ratio):
+    def dois_qdq_fp8_tensor_v2(self, tensor, ratio):
         assert len(tensor.shape) == 1, f"tensor.device:{tensor.device}"
         w_scale = tensor.abs().max() / get_fp_maxval(bits=8)
 
@@ -176,37 +174,47 @@ class AutoLayerScale:
         sorted_indices = torch.argsort(tensor.abs())
         closest_indices = sorted_indices[n]
 
-        cut_np_fp8w1 = max(orig_fp8w[closest_indices].float().abs(), get_fp_maxval(bits=8) / 7)
+        cut_np_fp8w1 = max(
+            orig_fp8w[closest_indices].float().abs(), get_fp_maxval(bits=8) / 7
+        )
 
         step = (get_fp_maxval(bits=8) - cut_np_fp8w1) / self.search_step
-        break_point = min(cut_np_fp8w1 + (step * (ratio+1)), get_fp_maxval(bits=8))
+        break_point = min(cut_np_fp8w1 + (step * (ratio + 1)), get_fp_maxval(bits=8))
 
         # FP8-list
         # r_list = [22, 30, 44, 60, 88, 120, 176, 224, 288, 320, 352, 384, 416, 448]
         # break_point = torch.tensor(r_list[ratio])
 
         adapt_scale = tensor.abs().max() / break_point.type(tensor.dtype)
-        print_info(f"{w_scale.item()}, {adapt_scale.item()}, "
-                   f"{tensor.abs().max().item()}, "
-                   f"{break_point.type(tensor.dtype).item()}")
+        print_info(
+            f"{w_scale.item()}, {adapt_scale.item()}, "
+            f"{tensor.abs().max().item()}, "
+            f"{break_point.type(tensor.dtype).item()}"
+        )
         return adapt_scale.to(tensor.dtype)
 
-    def dios_input_hook(self, module, input, scale):
+    def dois_input_hook(self, module, input, scale):
         modified_input = tensor_quant_dequant_fp8(input[0], scale)
         new_input = [modified_input]
-        for i in range(len(input)-1):
-            new_input.append(input[1+i])
+        for i in range(len(input) - 1):
+            new_input.append(input[1 + i])
             exit()
         return tuple(new_input)
 
     def search_by_block(
-        self, layer_name, act_input, act_abs_max, layers, block, cache,
+        self,
+        layer_name,
+        act_input,
+        act_abs_max,
+        layers,
+        block,
+        cache,
     ):
         print_info(f"inp.shape:{act_input.shape}")
         print_info(f"block:{block}")
         print_info(f"act_abs_max.shape:{act_abs_max.shape}")
         act = act_input
-        print_func("[dios search] search input of %s" % layer_name)
+        print_func("[dois search] search input of %s" % layer_name)
         best_error = float("inf")
         best_ratio = -1
         best_scales = None
@@ -237,15 +245,14 @@ class AutoLayerScale:
                 org_w.append(layer.weight.clone().cpu())
 
             for ratio in range(8, 21):
-                adapt_scale = self.dios_qdq_fp8_tensor(act.unsqueeze(0).view(-1), ratio).unsqueeze(0)
+                adapt_scale = self.dois_qdq_fp8_tensor(
+                    act.unsqueeze(0).view(-1), ratio
+                ).unsqueeze(0)
                 handles = []
                 for l in layers:
                     handles.append(
                         l.register_forward_pre_hook(
-                            functools.partial(
-                                self.dios_input_hook,
-                                scale=adapt_scale
-                            )
+                            functools.partial(self.dois_input_hook, scale=adapt_scale)
                         )
                     )
 
@@ -254,9 +261,11 @@ class AutoLayerScale:
                     new_out[j, :, :] = self._get_out(layer_name, new_act, block, cache)
 
                 loss = self.loss_function(origin_out, new_out).to(torch.float32)
-                print_func("ratio: {}, adscale: {}, loss: {}".format(ratio, adapt_scale, loss))
+                print_func(
+                    "ratio: {}, adscale: {}, loss: {}".format(ratio, adapt_scale, loss)
+                )
                 if loss < best_error:
-                    #print_func("find better ratio: {}, adapt_scale: {}, loss: {}".format(ratio, adapt_scale, loss))
+                    # print_func("find better ratio: {}, adapt_scale: {}, loss: {}".format(ratio, adapt_scale, loss))
                     best_error = loss
                     best_ratio = ratio
                     best_scales = adapt_scale
@@ -280,6 +289,8 @@ class AutoLayerScale:
             print_func("Cannot find better ratio.")
         else:
             print_func(
-                "Best ratio :{}, minimal loss : {}, best_scales:{}.".format(best_ratio, best_error, best_scales)
+                "Best ratio :{}, minimal loss : {}, best_scales:{}.".format(
+                    best_ratio, best_error, best_scales
+                )
             )
         return best_scales.detach().cpu()

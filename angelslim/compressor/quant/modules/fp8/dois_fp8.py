@@ -13,20 +13,20 @@
 # limitations under the License.
 
 import functools
-import os
 from collections import defaultdict
+
 import torch
 import torch.nn as nn
 
-from .....utils import get_best_device, print_info, find_parent_layer_and_sub_name
-from ...modules.catcher import Catcher
+from .....utils import find_parent_layer_and_sub_name, get_best_device, print_info
 from ...core.quant_func import get_fp_maxval
+from ...modules.catcher import Catcher
 from .pasd_scale import AutoLayerScale
 
-__all__ = ["DIOS_FP8"]
+__all__ = ["DOIS_FP8"]
 
 
-class DIOS_FP8:
+class DOIS_FP8:
     def __init__(
         self,
         ptq_hook,
@@ -44,7 +44,7 @@ class DIOS_FP8:
             model_arch_type(str, optional): model arch type.Default: None.
             low_memory(boll, optional): using low memory .Default: None.
         """
-        super(DIOS_FP8, self).__init__()
+        super(DOIS_FP8, self).__init__()
         self.ptq_hook = ptq_hook
         self.quant_model = model  # self.quant_model
         self.modal_type = self.quant_model.modal_type
@@ -62,7 +62,6 @@ class DIOS_FP8:
             model_type=self.model_arch_type,
             observer_layer_classes=self.observer_layer_classes,
         )
-
 
     def move_embed(self, model, device: str):
         print_info(model)
@@ -83,8 +82,8 @@ class DIOS_FP8:
         )
         cache = {"i": 0}
         layers[0] = layers[0].to(dev)
-        self.quant_model.model.model.embed_tokens = self.quant_model.model.model.embed_tokens.to(
-            dev
+        self.quant_model.model.model.embed_tokens = (
+            self.quant_model.model.model.embed_tokens.to(dev)
         )
         layers[0] = Catcher(layers[0], self.inps, cache)
         self.quant_model.model_forward(dataloader)
@@ -106,7 +105,7 @@ class DIOS_FP8:
         layers[0] = layers[0].module
         print_info(self.inps.shape)
         outs = torch.zeros_like(self.inps)
-        # begin the dios process
+        # begin the dois process
         print_info("Ready.")
         layers = layers.cpu()
         torch.cuda.empty_cache()
@@ -162,9 +161,9 @@ class DIOS_FP8:
             def deduplicate_tensors(tensor_list):
                 unique_tensors = []
                 assert len(tensor_list) % 2 == 0
-                for i in range(int(len(tensor_list)/2)):
-                    if torch.equal(tensor_list[i*2], tensor_list[i*2+1]):
-                        unique_tensors.append(tensor_list[i*2])
+                for i in range(int(len(tensor_list) / 2)):
+                    if torch.equal(tensor_list[i * 2], tensor_list[i * 2 + 1]):
+                        unique_tensors.append(tensor_list[i * 2])
                     else:
                         raise ValueError
                 for tensor in tensor_list:
@@ -201,7 +200,7 @@ class DIOS_FP8:
             layer = layer.cpu()
             torch.cuda.empty_cache()
             self.inps, outs = outs, self.inps
-            print_info("DIOS FP8 end layer {}\n".format(i))
+            print_info("DOIS FP8 end layer {}\n".format(i))
 
         print(self.scales_dict)
 
@@ -230,16 +229,22 @@ class DIOS_FP8:
                 sub_layer, self.ptq_hook.observer_dict[sub_layer].weight_observer
             )
 
-            self.quant_model.weight_scales_dict[name] = \
-                weight_scales / get_fp_maxval(bits=8).type(weight_scales.dtype)
-            old_scale = self.ptq_hook.observer_dict[
-                sub_layer
-            ].act_observer.scales()
-            dios_scale = torch.clamp(
-                self.scales_dict.pop(name).squeeze().detach().to(old_scale.device), min=0, max=99999)
+            self.quant_model.weight_scales_dict[name] = weight_scales / get_fp_maxval(
+                bits=8
+            ).type(weight_scales.dtype)
+            old_scale = self.ptq_hook.observer_dict[sub_layer].act_observer.scales()
+            dois_scale = torch.clamp(
+                self.scales_dict.pop(name).squeeze().detach().to(old_scale.device),
+                min=0,
+                max=99999,
+            )
 
-            self.quant_model.act_scales_dict[name] = dios_scale
-            print_info(f"{name} , {old_scale}, {old_scale / get_fp_maxval(bits=8).type(weight_scales.dtype).item()}, {dios_scale.item()}")
+            self.quant_model.act_scales_dict[name] = dois_scale
+            print_info(
+                f"{name} , {old_scale}, "
+                f"{old_scale / get_fp_maxval(bits=8).type(weight_scales.dtype).item()}, "
+                f"{dois_scale.item()}"
+            )
             old_list.append(old_scale / get_fp_maxval(bits=8).type(weight_scales.dtype))
             new_list.append(self.quant_model.act_scales_dict[name])
         print(sum(old_list))

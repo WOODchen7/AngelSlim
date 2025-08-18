@@ -1,6 +1,6 @@
 (fp8)=
 
-# FP8_DIOS量化
+# FP8_DOIS量化
 
 通常情况下PTQ统计Activation和Weight的abs Max值作为量化缩放系数。通过观察FP8 PTQ量化后有损的模型的数值分布发现，相较于量化无损模型会出现激活值分布方差过大的情况，这种数值分布会使得量化数值落在FP8难以表达的量化范围，导致模型在一些数学难题或文本格式要求严格的任务上损失过大。
 
@@ -18,7 +18,7 @@ python3 tools/run.py -c configs/qwen3/fp8_static/qwen3-0_6b_ados_fp8_static.yaml
 
 该配置文件中，量化相关参数如下：
 - `name`：压缩策略，选填量化`quantization`。
-- `quantization.name`：压缩算法填`fp8_dios`。
+- `quantization.name`：压缩算法填`fp8_dois`。
 - `quantization.bits`：fp8量化对应填写8bit。
 - `quantization.quant_method`：主要指定权重和激活的量化粒度为`per-tensor`。
 - `quantization.ignore_layers`：需要忽略不进行量化的线性层。

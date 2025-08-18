@@ -256,7 +256,7 @@ class SlimConfigParser:
         self.supported_quant_methods = [
             "fp8_static",
             "fp8_dynamic",
-            "fp8_dios",
+            "fp8_dois",
             "int4_awq",
             "int4_gptq",
             "int8_dynamic",
@@ -396,7 +396,7 @@ class SlimConfigParser:
             ),
             dataset_config=None,
             global_config=global_config,
-            infer_config=None
+            infer_config=None,
         )
 
 
