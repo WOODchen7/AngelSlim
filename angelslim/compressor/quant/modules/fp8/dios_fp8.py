@@ -247,7 +247,6 @@ class DIOS_FP8:
         self.ptq_hook.remove_hook()
         torch.cuda.empty_cache()
 
-        #exit()
         # 2. insert qdq module
         layers = self.quant_model.get_model()
         for name, sub_layer in self.ptq_hook.quant_layers_dict.items():
