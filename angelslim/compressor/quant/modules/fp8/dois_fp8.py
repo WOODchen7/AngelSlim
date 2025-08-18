@@ -242,7 +242,7 @@ class DOIS_FP8:
             self.quant_model.act_scales_dict[name] = dois_scale
             print_info(
                 f"{name} , {old_scale}, "
-                f"{old_scale / get_fp_maxval(bits=8).type(weight_scales.dtype).item()}, "
+                f"{old_scale / get_fp_maxval(bits=8).type(weight_scales.dtype).item()} "
                 f"{dois_scale.item()}"
             )
             old_list.append(old_scale / get_fp_maxval(bits=8).type(weight_scales.dtype))
