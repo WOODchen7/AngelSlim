@@ -14,6 +14,7 @@
 
 
 import functools
+
 import torch
 
 from angelslim.compressor.quant.core.quant_func import (
@@ -249,9 +250,9 @@ class AutoLayerScale:
                     act.unsqueeze(0).view(-1), ratio
                 ).unsqueeze(0)
                 handles = []
-                for l in layers:
+                for layer in layers:
                     handles.append(
-                        l.register_forward_pre_hook(
+                        layer.register_forward_pre_hook(
                             functools.partial(self.dois_input_hook, scale=adapt_scale)
                         )
                     )
@@ -265,7 +266,6 @@ class AutoLayerScale:
                     "ratio: {}, adscale: {}, loss: {}".format(ratio, adapt_scale, loss)
                 )
                 if loss < best_error:
-                    # print_func("find better ratio: {}, adapt_scale: {}, loss: {}".format(ratio, adapt_scale, loss))
                     best_error = loss
                     best_ratio = ratio
                     best_scales = adapt_scale
