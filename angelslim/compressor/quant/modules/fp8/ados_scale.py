@@ -33,7 +33,6 @@ class AutoLayerScale:
         observer_layer_classes=None,
     ):
         """
-        The implementation from psad(https://arxiv.org/pdf/2306.00978.pdf).
         """
         self.loss_function = loss_function
         self.merge_samples = merge_samples
@@ -115,7 +114,7 @@ class AutoLayerScale:
         )
 
 
-        print_info("auto scale -> Densepsad")
+        print_info("auto scale -> Denseados")
         # fc1
         scales_list.append(
             _auto_get_scale(
@@ -149,7 +148,7 @@ class AutoLayerScale:
         else:
             return block(act)[0].squeeze(1)
 
-    def psad_qdq_fp8_tensor(self, tensor, ratio):
+    def ados_qdq_fp8_tensor(self, tensor, ratio):
         assert len(tensor.shape) == 1, f"tensor.device:{tensor.device}"
         w_scale = tensor.abs().max() / get_fp_maxval(bits=8)
 
@@ -166,7 +165,7 @@ class AutoLayerScale:
         print_func(f"w_scale:{w_scale.item()}, adapt_scale:{adapt_scale.item()}, cut_np_fp8w1: {cut_np_fp8w1.item()}")
         return adapt_scale.to(tensor.dtype)
 
-    def psad_qdq_fp8_tensor_v2(self, tensor, ratio):
+    def ados_qdq_fp8_tensor_v2(self, tensor, ratio):
         assert len(tensor.shape) == 1, f"tensor.device:{tensor.device}"
         w_scale = tensor.abs().max() / get_fp_maxval(bits=8)
 
@@ -207,7 +206,7 @@ class AutoLayerScale:
         print_info(f"block:{block}")
         print_info(f"act_abs_max.shape:{act_abs_max.shape}")
         act = act_input
-        print_func("[psad search] search input of %s" % layer_name)
+        print_func("[ados search] search input of %s" % layer_name)
         best_error = float("inf")
         best_ratio = -1
         best_scales = None
@@ -238,7 +237,7 @@ class AutoLayerScale:
                 org_w.append(layer.weight.clone().cpu())
 
             for ratio in range(8, 21):
-                adapt_scale = self.psad_qdq_fp8_tensor(act.unsqueeze(0).view(-1), ratio).unsqueeze(0)
+                adapt_scale = self.ados_qdq_fp8_tensor(act.unsqueeze(0).view(-1), ratio).unsqueeze(0)
                 handles = []
                 for l in layers:
                     handles.append(

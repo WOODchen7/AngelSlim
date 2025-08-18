@@ -23,10 +23,10 @@ from ...modules.catcher import Catcher
 from ...core.quant_func import get_fp_maxval
 from .pasd_scale import AutoLayerScale
 
-__all__ = ["PSAD_FP8"]
+__all__ = ["ADOS_FP8"]
 
 
-class PSAD_FP8:
+class ADOS_FP8:
     def __init__(
         self,
         ptq_hook,
@@ -44,7 +44,7 @@ class PSAD_FP8:
             model_arch_type(str, optional): model arch type.Default: None.
             low_memory(boll, optional): using low memory .Default: None.
         """
-        super(PSAD_FP8, self).__init__()
+        super(ADOS_FP8, self).__init__()
         self.ptq_hook = ptq_hook
         self.quant_model = model  # self.quant_model
         self.modal_type = self.quant_model.modal_type
@@ -235,11 +235,11 @@ class PSAD_FP8:
             old_scale = self.ptq_hook.observer_dict[
                 sub_layer
             ].act_observer.scales()
-            psad_scale = torch.clamp(
+            ados_scale = torch.clamp(
                 self.scales_dict.pop(name).squeeze().detach().to(old_scale.device), min=0, max=99999)
 
-            self.quant_model.act_scales_dict[name] = psad_scale
-            print_info(f"{name} , {old_scale}, {old_scale / get_fp_maxval(bits=8).type(weight_scales.dtype).item()}, {psad_scale.item()}")
+            self.quant_model.act_scales_dict[name] = ados_scale
+            print_info(f"{name} , {old_scale}, {old_scale / get_fp_maxval(bits=8).type(weight_scales.dtype).item()}, {ados_scale.item()}")
             old_list.append(old_scale / get_fp_maxval(bits=8).type(weight_scales.dtype))
             new_list.append(self.quant_model.act_scales_dict[name])
         print(sum(old_list))
