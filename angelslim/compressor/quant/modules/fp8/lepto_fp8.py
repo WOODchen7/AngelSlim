@@ -23,10 +23,10 @@ from ...core.quant_func import get_fp_maxval
 from ...modules.catcher import Catcher
 from .lepto_scale import AutoLayerScale
 
-__all__ = ["LeptpFP8"]
+__all__ = ["LeptoFP8"]
 
 
-class LeptpFP8:
+class LeptoFP8:
     def __init__(
         self,
         ptq_hook,
@@ -44,7 +44,7 @@ class LeptpFP8:
             model_arch_type(str, optional): model arch type.Default: None.
             low_memory(boll, optional): using low memory .Default: None.
         """
-        super(LeptpFP8, self).__init__()
+        super(LeptoFP8, self).__init__()
         self.ptq_hook = ptq_hook
         self.quant_model = model  # self.quant_model
         self.modal_type = self.quant_model.modal_type

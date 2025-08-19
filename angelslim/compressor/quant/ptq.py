@@ -18,7 +18,7 @@ import torch.nn as nn
 from ...utils import find_parent_layer_and_sub_name, print_info
 from ..compressor_factory import CompressorFactory
 from .core import PTQHook
-from .modules import AWQ, FP8, GPTQ, INT8, LeptpFP8, SmoothQuant
+from .modules import AWQ, FP8, GPTQ, INT8, LeptoFP8, SmoothQuant
 
 __all__ = ["PTQ"]
 
@@ -70,7 +70,7 @@ class PTQ:
             hidden_size = self.quant_model.quant_config.hidden_size
             model_arch_type = self.quant_model.quant_config.model_arch_type
             if "lepto" in self.quant_algo:
-                self.fp8 = LeptpFP8(
+                self.fp8 = LeptoFP8(
                     self.ptq_hook,
                     self.quant_model,
                     seq_length=max_seq_length,
