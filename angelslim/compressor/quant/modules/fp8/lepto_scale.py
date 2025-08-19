@@ -17,12 +17,9 @@ import functools
 
 import torch
 
-from ...core.quant_func import (
-    quantize_weight_per_tensor_fp8,
-    tensor_quant_dequant_fp8,
-)
 from .....utils import get_op_name, print_info
 from ...core import get_fp_maxval, mse_loss
+from ...core.quant_func import quantize_weight_per_tensor_fp8, tensor_quant_dequant_fp8
 
 
 class AutoLayerScale:
