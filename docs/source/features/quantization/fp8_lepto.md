@@ -13,7 +13,7 @@
 运行示例如下：
 
 ```shell
-python3 tools/run.py -c configs/qwen3/fp8_static/qwen3-0_6b_ados_fp8_static.yaml
+python3 tools/run.py -c configs/qwen3/fp8_static/qwen3-0_6b_lepto_fp8_static.yaml
 ```
 
 该配置文件中，量化相关参数如下：
