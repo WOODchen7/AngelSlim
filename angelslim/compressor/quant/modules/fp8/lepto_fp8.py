@@ -191,7 +191,6 @@ class LeptoFP8:
             )
 
             for scales in scales_list:
-                # print(type(scales[0]), scales[0])
                 for kn in scales[0]:
                     name = "model.layers.{}.{}".format(i, kn)
                     self.scales_dict[name] = scales[1]
@@ -202,7 +201,7 @@ class LeptoFP8:
             self.inps, outs = outs, self.inps
             print_info("LEPTO FP8 end layer {}\n".format(i))
 
-        print(self.scales_dict)
+        print_info(self.scales_dict)
 
     def _find_layers(self, module, layers=None, name=""):
         if not layers:
@@ -247,8 +246,8 @@ class LeptoFP8:
             )
             old_list.append(old_scale / get_fp_maxval(bits=8).type(weight_scales.dtype))
             new_list.append(self.quant_model.act_scales_dict[name])
-        print(sum(old_list))
-        print(sum(new_list))
+        print_info(sum(old_list))
+        print_info(sum(new_list))
         self.ptq_hook.remove_hook()
         torch.cuda.empty_cache()
 

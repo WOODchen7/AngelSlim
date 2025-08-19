@@ -151,7 +151,7 @@ class PTQ:
             for k in self.quant_model.act_scales_dict.keys():
                 act_scales_data = self.quant_model.act_scales_dict[k].data
                 if act_scales_data > 1.5:
-                    print(
+                    print_info(
                         f"[AngelSlim Warning] Act_scales {k}: "
                         f"The weight is too high:{act_scales_data}. "
                         f"It is recommended to clip it to 1.5 "
@@ -159,7 +159,7 @@ class PTQ:
             for k in self.quant_model.weight_scales_dict.keys():
                 weight_scales_data = self.quant_model.weight_scales_dict[k].data
                 if weight_scales_data > 1.5:
-                    print(
+                    print_info(
                         f"[AngelSlim Warning] Weight_scales {k}: "
                         f"The weight is too high:{weight_scales_data}. "
                         f"It is recommended to clip it to 1.5 "
