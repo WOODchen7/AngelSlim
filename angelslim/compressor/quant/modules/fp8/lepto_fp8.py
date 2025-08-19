@@ -21,12 +21,12 @@ import torch.nn as nn
 from .....utils import find_parent_layer_and_sub_name, get_best_device, print_info
 from ...core.quant_func import get_fp_maxval
 from ...modules.catcher import Catcher
-from .pasd_scale import AutoLayerScale
+from .lepto_scale import AutoLayerScale
 
-__all__ = ["DOIS_FP8"]
+__all__ = ["LEPTO_FP8"]
 
 
-class DOIS_FP8:
+class LEPTO_FP8:
     def __init__(
         self,
         ptq_hook,
@@ -44,7 +44,7 @@ class DOIS_FP8:
             model_arch_type(str, optional): model arch type.Default: None.
             low_memory(boll, optional): using low memory .Default: None.
         """
-        super(DOIS_FP8, self).__init__()
+        super(LEPTO_FP8, self).__init__()
         self.ptq_hook = ptq_hook
         self.quant_model = model  # self.quant_model
         self.modal_type = self.quant_model.modal_type
@@ -105,7 +105,7 @@ class DOIS_FP8:
         layers[0] = layers[0].module
         print_info(self.inps.shape)
         outs = torch.zeros_like(self.inps)
-        # begin the dois process
+        # begin the lepto process
         print_info("Ready.")
         layers = layers.cpu()
         torch.cuda.empty_cache()
@@ -200,7 +200,7 @@ class DOIS_FP8:
             layer = layer.cpu()
             torch.cuda.empty_cache()
             self.inps, outs = outs, self.inps
-            print_info("DOIS FP8 end layer {}\n".format(i))
+            print_info("LEPTO FP8 end layer {}\n".format(i))
 
         print(self.scales_dict)
 
@@ -233,17 +233,17 @@ class DOIS_FP8:
                 bits=8
             ).type(weight_scales.dtype)
             old_scale = self.ptq_hook.observer_dict[sub_layer].act_observer.scales()
-            dois_scale = torch.clamp(
+            lepto_scale = torch.clamp(
                 self.scales_dict.pop(name).squeeze().detach().to(old_scale.device),
                 min=0,
                 max=99999,
             )
 
-            self.quant_model.act_scales_dict[name] = dois_scale
+            self.quant_model.act_scales_dict[name] = lepto_scale
             print_info(
                 f"{name} , {old_scale}, "
                 f"{old_scale / get_fp_maxval(bits=8).type(weight_scales.dtype).item()} "
-                f"{dois_scale.item()}"
+                f"{lepto_scale.item()}"
             )
             old_list.append(old_scale / get_fp_maxval(bits=8).type(weight_scales.dtype))
             new_list.append(self.quant_model.act_scales_dict[name])

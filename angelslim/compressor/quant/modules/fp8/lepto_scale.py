@@ -25,8 +25,6 @@ from angelslim.compressor.quant.core.quant_func import (
 from .....utils import get_op_name, print_info
 from ...core import get_fp_maxval, mse_loss
 
-print_func = print_info
-
 
 class AutoLayerScale:
     def __init__(
@@ -113,7 +111,7 @@ class AutoLayerScale:
             )
         )
 
-        print_info("auto scale -> Densedois")
+        print_info("auto scale -> Denselepto")
         # fc1
         scales_list.append(
             _auto_get_scale(
@@ -144,7 +142,7 @@ class AutoLayerScale:
         else:
             return block(act)[0].squeeze(1)
 
-    def dois_qdq_fp8_tensor(self, tensor, ratio):
+    def lepto_qdq_fp8_tensor(self, tensor, ratio):
         assert len(tensor.shape) == 1, f"tensor.device:{tensor.device}"
         w_scale = tensor.abs().max() / get_fp_maxval(bits=8)
 
@@ -158,13 +156,13 @@ class AutoLayerScale:
         cut_np_fp8w1 = orig_fp8w[closest_indices].float().abs()
 
         adapt_scale = tensor.abs().max() / cut_np_fp8w1.type(tensor.dtype)
-        print_func(
+        print_info(
             f"w_scale:{w_scale.item()}, adapt_scale:{adapt_scale.item()},"
             f" cut_np_fp8w1: {cut_np_fp8w1.item()}"
         )
         return adapt_scale.to(tensor.dtype)
 
-    def dois_qdq_fp8_tensor_v2(self, tensor, ratio):
+    def lepto_qdq_fp8_tensor_v2(self, tensor, ratio):
         assert len(tensor.shape) == 1, f"tensor.device:{tensor.device}"
         w_scale = tensor.abs().max() / get_fp_maxval(bits=8)
 
@@ -194,7 +192,7 @@ class AutoLayerScale:
         )
         return adapt_scale.to(tensor.dtype)
 
-    def dois_input_hook(self, module, input, scale):
+    def lepto_input_hook(self, module, input, scale):
         modified_input = tensor_quant_dequant_fp8(input[0], scale)
         new_input = [modified_input]
         for i in range(len(input) - 1):
@@ -215,7 +213,7 @@ class AutoLayerScale:
         print_info(f"block:{block}")
         print_info(f"act_abs_max.shape:{act_abs_max.shape}")
         act = act_input
-        print_func("[dois search] search input of %s" % layer_name)
+        print_info("[lepto search] search input of %s" % layer_name)
         best_error = float("inf")
         best_ratio = -1
         best_scales = None
@@ -246,14 +244,14 @@ class AutoLayerScale:
                 org_w.append(layer.weight.clone().cpu())
 
             for ratio in range(8, 21):
-                adapt_scale = self.dois_qdq_fp8_tensor(
+                adapt_scale = self.lepto_qdq_fp8_tensor(
                     act.unsqueeze(0).view(-1), ratio
                 ).unsqueeze(0)
                 handles = []
                 for layer in layers:
                     handles.append(
                         layer.register_forward_pre_hook(
-                            functools.partial(self.dois_input_hook, scale=adapt_scale)
+                            functools.partial(self.lepto_input_hook, scale=adapt_scale)
                         )
                     )
 
@@ -262,7 +260,7 @@ class AutoLayerScale:
                     new_out[j, :, :] = self._get_out(layer_name, new_act, block, cache)
 
                 loss = self.loss_function(origin_out, new_out).to(torch.float32)
-                print_func(
+                print_info(
                     "ratio: {}, adscale: {}, loss: {}".format(ratio, adapt_scale, loss)
                 )
                 if loss < best_error:
@@ -286,9 +284,9 @@ class AutoLayerScale:
 
         if best_scales is None:
             best_scales = torch.ones(adapt_scale.shape, dtype=act.dtype)
-            print_func("Cannot find better ratio.")
+            print_info("Cannot find better ratio.")
         else:
-            print_func(
+            print_info(
                 "Best ratio :{}, minimal loss : {}, best_scales:{}.".format(
                     best_ratio, best_error, best_scales
                 )
