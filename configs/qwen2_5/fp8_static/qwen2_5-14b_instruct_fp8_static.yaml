@@ -5,7 +5,7 @@ global:
 # Simplified Configuration for LLM compression
 model:
   name: Qwen
-  model_path: Qwen/Qwen2.5-Coder-14B-Instruct
+  model_path: Qwen/Qwen2.5-14B-Instruct
   trust_remote_code: true
   low_cpu_mem_usage: true
   use_cache: false
