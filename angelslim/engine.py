@@ -16,11 +16,12 @@ import json
 import os
 import sys
 from dataclasses import asdict, dataclass
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 import torch
 
 from .compressor import CompressorFactory
+from .compressor.speculative import BenchmarkConfig, BenchmarkEngine, BenchmarkMode
 from .data.dataloader import DataLoaderFactory
 from .models import SlimModelFactory
 from .utils import (
@@ -54,6 +55,7 @@ class Engine:
         self.dataloader = None
         self.compressor = None
         self.compress_type = None
+        self.only_inference = False
         self.model_path = None
         self.max_seq_length = None
 
@@ -180,11 +182,16 @@ class Engine:
             default_method (str, optional): Default compression method if not specified.
                If set default_method, compress_config and global_config will be ignored.
         """
-        if compress_name not in CompressorFactory.get_available_compressor():
-            raise ValueError(
-                f"Compression method '{compress_name}' not registered. "
-                f"Available methods: {CompressorFactory.get_available_compressor()}"
-            )
+        if isinstance(compress_name, str):
+            compress_names = [compress_name]
+        elif isinstance(compress_name, list):
+            compress_names = compress_name
+        for method_name in compress_names:
+            if method_name not in CompressorFactory.get_available_compressor():
+                raise ValueError(
+                    f"Compression method '{method_name}' not registered. "
+                    f"Available methods: {CompressorFactory.get_available_compressor()}"
+                )
         if self.series in ["LLM", "VLM"]:
             global_config.update(self.model_path, self.max_seq_length)
 
@@ -198,10 +205,13 @@ class Engine:
                 "global_config": global_config,
                 "compress_config": compress_config,
             }
-        self.compress_type = compress_name
+        self.compress_type = compress_names
+        self.only_inference = (
+            compress_config.only_inference if compress_config else False
+        )
         # Create compressor by CompressorFactory
         self.compressor = CompressorFactory.create(
-            compress_name, self.slim_model, slim_config=slim_config
+            compress_names, self.slim_model, slim_config=slim_config
         )
         return self.compressor
 
@@ -211,13 +221,19 @@ class Engine:
             raise RuntimeError(
                 "Compressor not initialized. Call prepare_compressor() first"
             )
-
-        if self.compress_type == "PTQ":
-            self.compressor.calibrate(self.dataloader)
-        else:
-            raise NotImplementedError(
-                f"Compression type {self.compress_type} is not implemented"
-            )
+        if isinstance(self.compressor, str):
+            compressors = [self.compressor]
+        elif isinstance(self.compressor, list):
+            compressors = self.compressor
+        for idx, compress_type in enumerate(self.compress_type):
+            if self.only_inference[idx]:
+                continue
+            if compress_type == "PTQ":
+                compressors[idx].calibrate(self.dataloader)
+            else:
+                raise NotImplementedError(
+                    f"Compression type {self.compress_type} is not implemented"
+                )
 
     def save(
         self, save_path: Optional[str] = None, config: Optional[dataclass] = None
@@ -227,12 +243,19 @@ class Engine:
             save_path (str, optional): Path to save the compressed model and tokenizer.
         """
         assert save_path, "Save path must be provided in model_config or as an argument"
-        if self.compress_type == "PTQ":
-            # Execute model conversion
-            self.compressor.convert()
+        if isinstance(self.compressor, str):
+            compressors = [self.compressor]
+        elif isinstance(self.compressor, list):
+            compressors = self.compressor
+        for idx, compress_type in enumerate(self.compress_type):
+            if self.only_inference[idx]:
+                continue
+            if compress_type == "PTQ":
+                # Execute model conversion
+                compressors[idx].convert()
 
-        # Save quantized model
-        self.compressor.save(save_path)
+            # Save quantized model
+            compressors[idx].save(save_path)
 
         # Save all config
         if config is not None:
@@ -346,3 +369,160 @@ class InferEngine(Engine):
             raise NotImplementedError(
                 f"Series {self.series} is not implemented for inference"
             )
+
+
+class SpecEngine:
+    """
+    High-level interface for speculative decoding benchmarks
+    Integrates BenchmarkEngine with additional workflow management
+    """
+
+    def __init__(self, config: Optional[BenchmarkConfig] = None):
+        self.config = config
+        self.benchmark_engine = None
+        self.results = {}
+
+    def setup_benchmark(
+        self,
+        base_model_path: str,
+        eagle_model_path: str,
+        model_id: str,
+        bench_name: str = "mt_bench",
+        output_dir: Optional[str] = None,
+        **kwargs,
+    ) -> BenchmarkConfig:
+        """
+        Setup benchmark configuration
+
+        Args:
+            base_model_path: Path to base model
+            eagle_model_path: Path to Eagle model
+            model_id: Model identifier
+            bench_name: Benchmark dataset name
+            output_dir: Output directory for results
+            **kwargs: Additional configuration parameters
+
+        Returns:
+            BenchmarkConfig instance
+        """
+        config_dict = {
+            "base_model_path": base_model_path,
+            "eagle_model_path": eagle_model_path,
+            "model_id": model_id,
+            "bench_name": bench_name,
+            "output_dir": output_dir,
+        }
+        config_dict.update(kwargs)
+
+        self.config = BenchmarkConfig(**config_dict)
+        self.benchmark_engine = BenchmarkEngine(self.config)
+
+        return self.config
+
+    def run_eagle_benchmark(self) -> Dict[str, Any]:
+        """Run Eagle speculative decoding benchmark only"""
+        if not self.benchmark_engine:
+            raise RuntimeError(
+                "Benchmark not configured. Call setup_benchmark() first."
+            )
+
+        self.results = self.benchmark_engine.run_benchmark(BenchmarkMode.EAGLE)
+        return self.results
+
+    def run_baseline_benchmark(self) -> Dict[str, Any]:
+        """Run baseline benchmark only"""
+        if not self.benchmark_engine:
+            raise RuntimeError(
+                "Benchmark not configured. Call setup_benchmark() first."
+            )
+
+        self.results = self.benchmark_engine.run_benchmark(BenchmarkMode.BASELINE)
+        return self.results
+
+    def run_full_benchmark(self) -> Dict[str, Any]:
+        """
+        Run complete benchmark (both Eagle and baseline) with automatic analysis
+
+        Returns:
+            Dictionary containing all results and metrics
+        """
+        if not self.benchmark_engine:
+            raise RuntimeError(
+                "Benchmark not configured. Call setup_benchmark() first."
+            )
+
+        self.results = self.benchmark_engine.run_benchmark(BenchmarkMode.BOTH)
+        return self.results
+
+    def calculate_acceptance_length(self, eagle_file: Optional[str] = None) -> float:
+        """
+        Calculate acceptance length from Eagle benchmark results
+
+        Args:
+            eagle_file: Path to Eagle results file
+                (optional, uses default if not provided)
+
+        Returns:
+            Average acceptance length
+        """
+        if not self.benchmark_engine:
+            raise RuntimeError(
+                "Benchmark not configured. Call setup_benchmark() first."
+            )
+
+        if eagle_file is None:
+            eagle_file = self.benchmark_engine.eagle_file
+
+        return self.benchmark_engine._calculate_acceptance_length(eagle_file)
+
+    def calculate_speedup_ratio(
+        self,
+        baseline_file: Optional[str] = None,
+        eagle_file: Optional[str] = None,
+        model_path: Optional[str] = None,
+    ) -> float:
+        """
+        Calculate speedup ratio between baseline and Eagle
+
+        Args:
+            baseline_file: Path to baseline results file
+            eagle_file: Path to Eagle results file
+            model_path: Path to model for tokenization
+
+        Returns:
+            Speedup ratio
+        """
+        if not self.benchmark_engine:
+            raise RuntimeError(
+                "Benchmark not configured. Call setup_benchmark() first."
+            )
+
+        if baseline_file is None:
+            baseline_file = self.benchmark_engine.baseline_file
+        if eagle_file is None:
+            eagle_file = self.benchmark_engine.eagle_file
+        if model_path is None:
+            model_path = self.config.base_model_path
+
+        return self.benchmark_engine._calculate_speedup_ratio(
+            model_path, baseline_file, eagle_file
+        )
+
+    def get_performance_report(self) -> str:
+        """Generate comprehensive performance report"""
+        if not self.benchmark_engine:
+            return "Benchmark not configured."
+
+        return self.benchmark_engine.get_performance_summary()
+
+    def cleanup_results(self):
+        """Clean up temporary result files"""
+        if self.benchmark_engine:
+            for file_path in [
+                self.benchmark_engine.eagle_file,
+                self.benchmark_engine.baseline_file,
+                self.benchmark_engine.analysis_file,
+            ]:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    print(f"Removed: {file_path}")

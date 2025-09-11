@@ -31,6 +31,7 @@
 - [技术交流](#技术交流)
 
 ## 📣最新进展
+- [25/09/01] 我们支持了[Hunyuan-MT-7B](https://huggingface.co/tencent/Hunyuan-MT-7B-fp8)翻译开源模型的FP8量化；支持了Eagle3的Torch推理及Benchmark评测流程；支持了[FLUX](https://github.com/Tencent/AngelSlim/tree/main/configs/flux)的量化、Cache；支持了[Seed-OSS](https://github.com/Tencent/AngelSlim/tree/main/configs/seed_oss)模型量化压缩。
 - [25/08/06] 我们支持了`Hunyuan 0.5B/1.8B/4B/7B`和`Qwen2.5VL 3B/7B/32B/72B`的FP8、INT4量化，支持了`DeepSeek-R1/V3`和`Kimi-K2`模型的`FP8-Static`、`W4A8-FP8`量化。我们还开源了`Hunyuan 1.8B/4B/7B`系列模型的Eagle3权重。
 - [25/07/04] 我们支持了`Hunyuan/Qwen2.5/Qwen3/DeepSeek-R1-Distill-Qwen`等模型的量化，包含INT8、FP8、INT4等算法。
 我们还开源了`Qwen3`系列模型的Eagle3权重。
@@ -98,6 +99,7 @@ cd AngelSlim && python setup.py install
 
 ### 快速开始
 
+#### 量化
 完成安装`AngelSlim`后，您可以通过以下脚本快速开始，完成`Qwen3-1.7B`模型的静态`FP8`量化：
 
 - 一键式启动
@@ -128,11 +130,23 @@ cd AngelSlim && python setup.py install
 
 详情请参考[快速开始文档](https://angelslim.readthedocs.io/zh-cn/latest/getting_started/quickstrat.html)。
 
+#### 投机采样
+完成安装`AngelSlim`后，您可以通过以下脚本快速开始，完成`Eagle3`的Pytorch性能测试：
+```bash
+python3 tools/spec_benchmark.py \
+    --base-model-path /path/to/base/model \
+    --eagle-model-path /path/to/eagle/model \
+    --model-id your_model_id \
+    --mode both
+```
+
+详情请参考[快速开始文档](https://angelslim.readthedocs.io/zh-cn/latest/getting_started/quickstrat.html)。
+
 ### 部署与测试
 
 #### 1. 离线推理
 
-如果需要通过`transformers`加载量化模型，请在量化模型配置的`global`中设置`deploy_backend: huggingface`，或者直接手动将量化产出模型路径下`config.json`配置中的`ignored_layers`字段改为`ignore`。
+如果需要通过`transformers`加载量化模型，请在量化模型配置的`global`中设置`deploy_backend: huggingface`，或者直接手动将量化产出模型路径下`config.json`配置中的key `ignored_layers`改为`ignore`。
 
 测试`transformers`加载量化模型离线推理：
 
