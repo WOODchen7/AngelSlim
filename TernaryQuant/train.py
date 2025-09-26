@@ -19,7 +19,7 @@ import transformers
 from models.configuration_llama import LlamaConfig
 from models.modeling_llama_quant import LlamaForCausalLM as LlamaForCausalLMQuant
 from torch import distributed as dist
-from transformers import AutoModelForCausalLM, Trainer, default_data_collator
+from transformers import Trainer
 from utils import utils
 from utils.datautils_e2e import make_data_module
 from utils.process_args import process_args
@@ -80,7 +80,6 @@ def train():
     config.range_of_lambada = args.range_of_lambada
     config.eps = args.eps
 
-    # teacher_model = AutoModelForCausalLM.from_pretrained(args.model_path, torch_dtype=dtype,)
     model = LlamaForCausalLMQuant.from_pretrained(
         pretrained_model_name_or_path=args.model_path,
         config=config,
@@ -153,20 +152,6 @@ def train():
 
     log.info("Complete tokenizer loading...")
 
-    # train_dataset, valid_dataset = datautils.get_train_val_dataset(
-    #     train_path=args.train_data_local_path,
-    #     valid_path=args.eval_data_local_path
-    #     if args.eval_data_local_path is not None
-    #     else None,
-    # )
-    # train_data = datautils.CustomJsonDataset(
-    #     train_dataset, tokenizer, block_size=training_args.model_max_length
-    # )
-    # valid_data = datautils.CustomJsonDataset(
-    #     valid_dataset, tokenizer, block_size=min(training_args.model_max_length, 1024)
-    # )
-    # data_collator = default_data_collator
-
     model.config.use_cache = False
 
     if training_args.do_train:
@@ -184,7 +169,7 @@ def train():
             eval_dataset=valid_data if training_args.do_eval else None,
             data_collator=data_collator,
         )
-        train_result = trainer.train()
+        _ = trainer.train()
         trainer.save_state()
         utils.safe_save_model_for_hf_trainer(trainer, args.output_model_local_path)
 

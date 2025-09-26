@@ -127,6 +127,7 @@ def make_data_module(tokenizer: transformers.PreTrainedTokenizer, args) -> Dict:
     Make dataset and collator for supervised fine-tuning or continue pre-train.
     """
 
+    dataset = None
     def load_data(dataset_name):
         if dataset_name == "alpaca":
             return load_dataset("tatsu-lab/alpaca")
@@ -350,8 +351,6 @@ def make_data_module(tokenizer: transformers.PreTrainedTokenizer, args) -> Dict:
             dataset = load_from_disk(cache_dataloader)
             print(f"load dataset cache from {cache_dataloader}")
             if args.begin_train_ratio != 0.0:
-                from torch.utils.data import Subset
-
                 print(f"begining ratio {args.begin_train_ratio}")
                 dataset["train"] = dataset["train"].select(
                     range(
