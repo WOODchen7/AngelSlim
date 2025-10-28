@@ -20,9 +20,9 @@ from enum import Enum
 from typing import Any, Dict, Optional
 
 import numpy as np
-import ray
-from fastchat.llm_judge.common import load_questions
 from transformers import AutoTokenizer
+
+from angelslim.utils.lazy_imports import fastchat, ray
 
 from .generate_baseline_answer import get_model_answers as get_baseline_answers
 from .generate_eagle_answer import get_model_answers as get_eagle_answers
@@ -69,6 +69,9 @@ class BenchmarkConfig:
 
     # Analysis settings
     calculate_metrics: bool = True
+
+    # SpecExit
+    early_stop_method: Optional[str] = None
 
 
 class BenchmarkEngine:
@@ -143,7 +146,7 @@ class BenchmarkEngine:
         """Run Eagle speculative decoding benchmark"""
         args = self._create_args_namespace("eagle")
 
-        questions = load_questions(
+        questions = fastchat.llm_judge.common.load_questions(
             self._get_question_file_path(),
             self.config.question_begin,
             self.config.question_end,
@@ -183,7 +186,7 @@ class BenchmarkEngine:
         """Run baseline benchmark"""
         args = self._create_args_namespace("baseline")
 
-        questions = load_questions(
+        questions = fastchat.llm_judge.common.load_questions(
             self._get_question_file_path(),
             self.config.question_begin,
             self.config.question_end,
@@ -333,6 +336,8 @@ class BenchmarkEngine:
 
         args.seed = self.config.seed
         args.load_in_8bit = False
+
+        args.early_stop_method = self.config.early_stop_method
 
         return args
 

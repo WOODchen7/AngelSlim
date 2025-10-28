@@ -23,7 +23,7 @@ from huggingface_hub import save_torch_state_dict
 from tqdm import tqdm
 
 from .....utils import find_layers, get_best_device, print_info, set_op_by_name
-from ...core import pseudo_quantize_tensor
+from ...core import pseudo_quantize_tensor, weight_dequant
 from ...modules.catcher import Catcher
 from ...modules.helper_layer import WQLinearGEMM
 from .auto_clip import AutoLayerClip
@@ -158,9 +158,9 @@ class AWQ:
             if not self.low_memory:
                 outs = outs.to(dev)
                 self.inps = self.inps.to(dev)
-            subset = find_layers(layer)
+            subset = find_layers(layer, layers=self.observer_layer_classes)
 
-            if self.model_arch_type in ["qwen3_moe", "hunyuan_v1_moe"]:
+            if self.model_arch_type in ["qwen3_moe", "hunyuan_v1_moe", "deepseek_v3"]:
                 subset = {
                     **subset,
                     "mlp": layer.mlp,
@@ -290,7 +290,10 @@ class AWQ:
             force_contiguous=True,
             shared_tensors_to_discard=self.model.model._tied_weights_keys,
         )
-        self.model.model.config.torch_dtype = "float16"
+        if self.model_arch_type == "deepseek_v3":
+            self.model.model.config.torch_dtype = "bfloat16"
+        else:
+            self.model.model.config.torch_dtype = "float16"
         self.model.model.config.to_json_file(os.path.join(save_dir, "config.json"))
 
         # save processor and tokenizer
@@ -303,8 +306,15 @@ class AWQ:
         for name, linear_layer in named_linears.items():
             if "mlp.gate." in name:
                 continue
-            # NOTE: small regression in perplexity if linear layer uses .cpu().float()
-            linear_layer = linear_layer.to(get_best_device()).half()
+            if linear_layer.weight.dtype == torch.float8_e4m3fn:
+                linear_layer = linear_layer.to("cuda")
+                w = weight_dequant(linear_layer.weight, linear_layer.weight_scale_inv)
+                linear_layer = linear_layer.to("cpu")
+                w = w.to("cpu")
+                linear_layer.weight.data = w
+            else:
+                # NOTE: small regression in perplexity if linear uses .cpu().float()
+                linear_layer = linear_layer.to(get_best_device()).half()
 
             linear_layer.weight.data, scales, zeros = pseudo_quantize_tensor(
                 linear_layer.weight.data,
@@ -334,7 +344,7 @@ class AWQ:
 
     def _convert_llm(self):
         for i in tqdm(range(len(self.layers)), desc="AWQ"):
-            subset = find_layers(self.layers[i])
+            subset = find_layers(self.layers[i], layers=self.observer_layer_classes)
             self._apply_quant(self.layers[i], subset)
 
     def convert(self):

@@ -20,13 +20,12 @@ import time
 from typing import Any, Dict, List
 
 import numpy as np
-import ray
 import shortuuid
 import torch
-from fastchat.llm_judge.common import load_questions
 from tqdm import tqdm
 
 from angelslim.compressor.speculative.inference.models import Eagle3Model
+from angelslim.utils.lazy_imports import fastchat, ray
 
 SYSTEM_PROMPT = {
     "role": "system",
@@ -57,6 +56,7 @@ class EvaluationConfig:
         self.total_token = args.total_token
         self.depth = args.depth
         self.top_k = args.top_k
+        self.early_stop_method = args.early_stop_method
 
     def _get_question_file_path(self, args: argparse.Namespace) -> str:
         script_dir = os.path.dirname(__file__)
@@ -91,6 +91,7 @@ def initialize_model(config: EvaluationConfig) -> Eagle3Model:
         top_k=config.top_k,
         device_map="auto",
         torch_dtype="auto",
+        early_stop_method=config.early_stop_method,
     )
     model.eval()
     print(f"Model training state: {model.training}")
@@ -235,7 +236,7 @@ def get_model_answers(
 
 def run_evaluation(config: EvaluationConfig, args: argparse.Namespace) -> None:
     """Run the evaluation with optional distributed processing"""
-    questions = load_questions(
+    questions = fastchat.llm_judge.common.load_questions(
         config.question_file, args.question_begin, args.question_end
     )
 
@@ -318,6 +319,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-gpu-memory", type=str, help="Max GPU memory per GPU")
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--early-stop-method", type=str, default=None)
     return parser.parse_args()
 
 
