@@ -10,7 +10,7 @@ model:
   low_cpu_mem_usage: true
   use_cache: false
   torch_dtype: auto
-  device_map: auto
+  device_map: cpu
 
 # Compression configuration
 compression:
