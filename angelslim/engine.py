@@ -284,6 +284,7 @@ class Engine:
             }
             config_dict["model_config"]["model_path"] = "Base Model Path"
             config_dict["global_config"]["save_path"] = "Save Model Path"
+            config_dict["global_config"]["absolute_model_path"] = "Base Model Path"
             if "dataset_config" in config_dict and isinstance(
                 config_dict["dataset_config"], dict
             ):
