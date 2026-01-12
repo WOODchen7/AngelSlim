@@ -1,0 +1,13 @@
+accelerate==1.10.0
+bitsandbytes==0.47.0
+datasets==2.18.0
+lm_eval==0.4.9.1
+numpy==1.26.4
+# torch==2.6.0+cu123
+tqdm==4.64.1
+transformers==4.51.1
+triton==3.2.0
+termcolor
+sentencepiece
+protobuf
+wandb
