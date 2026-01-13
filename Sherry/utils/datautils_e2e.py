@@ -1,4 +1,6 @@
 ## code from qlora
+# Modified from ParetoQ，https://arxiv.org/abs/2502.02631
+
 import torch
 from typing import Dict, Sequence
 from datasets import load_dataset, load_from_disk, DatasetDict

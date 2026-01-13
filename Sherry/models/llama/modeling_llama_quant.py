@@ -23,6 +23,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+# Modified from ParetoQ，https://arxiv.org/abs/2502.02631
+
 from typing import Callable, List, Optional, Tuple, Union
 
 import torch

@@ -3,6 +3,7 @@
 
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
+# Modified from ParetoQ，https://arxiv.org/abs/2502.02631
 
 import os
 from dataclasses import dataclass, field

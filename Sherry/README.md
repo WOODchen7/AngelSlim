@@ -1,6 +1,6 @@
 # <img src="figures/sherry.jpg" width="40"> Sherry: Hardware-Efficient 1.25-Bit Ternary Quantization via Fine-grained Sparsification
 
-This repository contains the code for the paper "Sherry: Hardware-Efficient 1.25-Bit Ternary Quantization via Fine-grained Sparsification."
+This repository contains the code for the paper "Sherry: Hardware-Efficient 1.25-Bit Ternary Quantization via Fine-grained Sparsification." Our code is modified from ParetoQ，https://arxiv.org/abs/2502.02631
 
 
 ## Overview
