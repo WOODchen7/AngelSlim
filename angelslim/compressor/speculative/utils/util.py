@@ -90,9 +90,9 @@ def prepare_logits_processor(
     return processor_list
 
 
-def initialize_tree(input_ids, model, past_key_values, logits_processor):
+def initialize_tree(input_ids, inputs_embeds, model, past_key_values, logits_processor):
     outputs, orig, hidden_states = model(
-        input_ids, past_key_values=past_key_values, output_orig=True
+        input_ids, inputs_embeds, past_key_values=past_key_values, output_orig=True
     )
 
     if logits_processor is not None:
@@ -104,16 +104,22 @@ def initialize_tree(input_ids, model, past_key_values, logits_processor):
         token = torch.argmax(orig[:, -1])
         token = token[None, None]
     input_ids = torch.cat((input_ids, token.to(input_ids.device)), dim=1)
+    # add embedding
+    add_inputs_embeds = None
+    if inputs_embeds is not None:
+        add_inputs_embeds = torch.cat(
+            [inputs_embeds, model.eagle_layer.embed_tokens(token)], dim=1
+        )
 
     # Clone the output hidden states
     eagle_device = next(model.eagle_layer.parameters()).device
     if outputs["hidden_states"][0].device != eagle_device:
-        outputs["hidden_states"] = [
-            x.to(eagle_device) for x in outputs["hidden_states"]
-        ]
+        outputs["hidden_states"] = [x.to(eagle_device) for x in outputs["hidden_states"]]
     hidden_states = torch.cat(outputs["hidden_states"], dim=-1)
     draft_tokens, retrieve_indices, tree_mask, tree_position_ids, _ = (
-        model.eagle_layer.topK_genrate(hidden_states, input_ids, logits_processor)
+        model.eagle_layer.topK_genrate(
+            hidden_states, input_ids, add_inputs_embeds, logits_processor
+        )
     )
     return (
         draft_tokens,
@@ -144,9 +150,8 @@ def tree_decoding(
     position_ids = tree_position_ids + input_ids.shape[1]
     if position_ids is not None and position_ids.dim() == 1:
         position_ids = position_ids.unsqueeze(0)
-    # import pdb; pdb.set_trace()
     outputs, tree_logits, hidden_state = model(
-        tree_candidates,
+        input_ids=tree_candidates,
         output_orig=True,
         past_key_values=past_key_values,
         position_ids=position_ids,
@@ -154,9 +159,7 @@ def tree_decoding(
 
     eagle_device = next(model.eagle_layer.parameters()).device
     if outputs["hidden_states"][0].device != eagle_device:
-        outputs["hidden_states"] = [
-            x.to(eagle_device) for x in outputs["hidden_states"]
-        ]
+        outputs["hidden_states"] = [x.to(eagle_device) for x in outputs["hidden_states"]]
     hidden_state = torch.cat(outputs["hidden_states"], dim=-1)
 
     logits = tree_logits[0, retrieve_indices]
@@ -258,6 +261,7 @@ def evaluate_posterior(
 @torch.no_grad()
 def update_inference_inputs(
     input_ids,
+    inputs_embeds,
     candidates,
     best_candidate,
     accept_length,
@@ -270,11 +274,11 @@ def update_inference_inputs(
     hidden_state_new,
     sample_token,
 ):
+    if inputs_embeds is not None:
+        assert input_ids.shape[1] == inputs_embeds.shape[1]
     prev_input_len = input_ids.shape[1]
     # Map the best candidate indices to the original indices in the sequence
-    select_indices = (
-        retrieve_indices[best_candidate, : accept_length + 1] + prev_input_len
-    )
+    select_indices = retrieve_indices[best_candidate, : accept_length + 1] + prev_input_len
     # Append the tokens from the best candidate to the input sequence
     input_ids = torch.cat(
         [
@@ -283,17 +287,20 @@ def update_inference_inputs(
         ],
         dim=-1,
     )
+
+    # add embedding
+    if inputs_embeds is not None:
+        add_inputs_embeds = model.eagle_layer.embed_tokens.weight[
+            candidates[None, best_candidate, : accept_length + 1].squeeze(0).tolist()
+        ].unsqueeze(0)
+        inputs_embeds = torch.cat([inputs_embeds, add_inputs_embeds], dim=1)
     # Update the past key values based on the selected tokens
     # Source tensor that contains relevant past information based
     # on the selected candidate
     for past_key_values_data in past_key_values_data_list:
-        tgt = past_key_values_data[
-            ..., select_indices.to(past_key_values_data.device), :
-        ]
+        tgt = past_key_values_data[..., select_indices.to(past_key_values_data.device), :]
         # Destination tensor where the relevant past information will be stored
-        dst = past_key_values_data[
-            ..., prev_input_len : prev_input_len + tgt.shape[-2], :
-        ]
+        dst = past_key_values_data[..., prev_input_len : prev_input_len + tgt.shape[-2], :]
         # Copy relevant past information from the source to the destination
         dst.copy_(tgt, non_blocking=True)
 
@@ -301,14 +308,21 @@ def update_inference_inputs(
     current_length_data.fill_(prev_input_len + tgt.shape[-2])
 
     retrieve_hidden_state_new = hidden_state_new[:, retrieve_indices]
-    accept_hidden_state_new = retrieve_hidden_state_new[
-        :, best_candidate, : accept_length + 1
-    ]
+    accept_hidden_state_new = retrieve_hidden_state_new[:, best_candidate, : accept_length + 1]
+
+    # add embedding
+    tmp_inputs_embeds = None
+    if inputs_embeds is not None:
+        add_inputs_embeds = model.eagle_layer.embed_tokens.weight[
+            sample_token.squeeze(0).tolist()
+        ].unsqueeze(0)
+        tmp_inputs_embeds = torch.cat([inputs_embeds, add_inputs_embeds], dim=1)
 
     draft_tokens, retrieve_indices, tree_mask, tree_position_ids, early_stop_signal = (
         model.eagle_layer.topK_genrate(
             accept_hidden_state_new,
             input_ids=torch.cat((input_ids, sample_token.to(input_ids.device)), dim=1),
+            inputs_embeds=tmp_inputs_embeds,
             logits_processor=logits_processor,
         )
     )
@@ -317,6 +331,7 @@ def update_inference_inputs(
 
     return (
         input_ids,
+        inputs_embeds,
         draft_tokens,
         retrieve_indices,
         tree_mask,
@@ -324,3 +339,13 @@ def update_inference_inputs(
         new_token,
         early_stop_signal,
     )
+
+
+@torch.no_grad()
+def padding(tensor, left=True):
+    zeropadding = torch.zeros_like(tensor[:, -1:, ...])
+    if left:
+        tensor = torch.cat((zeropadding, tensor[:, :-1, ...]), dim=1)
+    else:
+        tensor = torch.cat((tensor[:, 1:, ...], zeropadding), dim=1)
+    return tensor

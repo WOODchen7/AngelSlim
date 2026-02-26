@@ -19,6 +19,7 @@ from ..quant_func import (
     fp8_per_block_quant,
     fp8_per_tensor_quant,
     fp8_per_token_group_quant,
+    fp8_per_token_quant_sgl,
     fp8_weight_only_gemm,
 )
 
@@ -32,6 +33,7 @@ class FP8DynamicLinear(torch.nn.Module):
         bias: torch.nn.Parameter,
         native_fp8_support: bool = False,
         quant_type: str = "fp8-per-tensor",
+        block_size: int = 128,
     ):
         super().__init__()
         self.weight = torch.nn.Parameter(weight, requires_grad=False)
@@ -39,6 +41,7 @@ class FP8DynamicLinear(torch.nn.Module):
         self.bias = bias
         self.native_fp8_support = native_fp8_support
         self.quant_type = quant_type
+        self.block_size = block_size
 
     @torch.compiler.disable(recursive=True)
     def forward(self, x):
@@ -59,6 +62,10 @@ class FP8DynamicLinear(torch.nn.Module):
             origin_shape = None
             x_2d = x.view(-1, x.shape[-1])
             qinput, x_scale = fp8_per_token_group_quant(x_2d, x_2d.shape[-1])
+        elif self.quant_type == "fp8-per-token-sgl" and self.native_fp8_support:
+            origin_shape = x.shape
+            x_2d = x.view(-1, x.shape[-1])
+            qinput, x_scale = fp8_per_token_quant_sgl(x_2d)
         elif self.quant_type == "fp8-per-block" and self.native_fp8_support:
             origin_shape = x.shape
             x = x.view(-1, x.shape[-1])
@@ -66,8 +73,9 @@ class FP8DynamicLinear(torch.nn.Module):
                 x, group_size=128, column_major_scales=True, scale_tma_aligned=True
             )
         elif self.quant_type == "fp8-per-block" and not self.native_fp8_support:
-            origin_shape = None
-            qinput, x_scale = fp8_per_block_quant(x, block_size=128)
+            origin_shape = x.shape
+            x_2d = x.view(-1, x.shape[-1])
+            qinput, x_scale = fp8_per_block_quant(x_2d, block_size=128)
         else:
             raise ValueError(f"Invalid quant_type: {self.quant_type}")
 
@@ -83,8 +91,23 @@ class FP8DynamicLinear(torch.nn.Module):
             origin_shape=origin_shape,
         )
 
-        if self.quant_type == "fp8-per-token" and x.dim() == 3 and output.dim() == 2:
+        if (
+            self.quant_type in ["fp8-per-token", "fp8-per-token-sgl"]
+            and x.dim() == 3
+            and output.dim() == 2
+        ):
             output = output.unsqueeze(0)
+
+        # Restore original shape for fp8-per-block with native_fp8_support=False
+        # (native_fp8_support=True case is handled in fp8_gemm_deepgemm_block)
+        if (
+            self.quant_type == "fp8-per-block"
+            and not self.native_fp8_support
+            and origin_shape is not None
+            and len(origin_shape) == 3
+            and output.dim() == 2
+        ):
+            output = output.view(origin_shape[0], origin_shape[1], -1)
 
         return output
 

@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Optional
 
 import torch
+import torch.distributed as dist
 from transformers.utils.hub import cached_file
 
 
@@ -148,10 +149,18 @@ def get_hf_config(model_path) -> dict:
         return json_data
 
 
+def get_hf_model_path(model_path) -> str:
+    "When model_path does not exist, fetch the model.config from cached_file."
+    if os.path.isfile(model_path):
+        return model_path
+    else:
+        return os.path.dirname(cached_file(model_path, "config.json"))
+
+
 def common_prefix(str1, str2):
-    return "".join(
-        x[0] for x in takewhile(lambda x: x[0] == x[1], zip(str1, str2))
-    ).rpartition(".")[0]
+    return "".join(x[0] for x in takewhile(lambda x: x[0] == x[1], zip(str1, str2))).rpartition(
+        "."
+    )[0]
 
 
 def get_package_info(package_name: str) -> dict:
@@ -172,3 +181,105 @@ def get_package_info(package_name: str) -> dict:
         except Exception:
             pass
     return info
+
+
+def rank0_print(*args, **kwargs):
+    if dist.is_initialized():
+        rank = dist.get_rank()
+    else:
+        rank = int(os.environ.get("LOCAL_RANK", 0))
+
+    if rank == 0:
+        print(*args, **kwargs)
+
+
+def _get_distributed_info():
+    """
+    Get distributed training information.
+
+    Returns:
+        Tuple of (rank, world_size, local_rank):
+        - rank: Global rank in distributed training (-1 if not distributed)
+        - world_size: Total number of processes (1 if not distributed)
+        - local_rank: Local rank on current node (-1 if not set)
+    """
+    rank = -1
+    world_size = 1
+    local_rank = -1
+
+    # Check for torchrun environment variable first
+    if "LOCAL_RANK" in os.environ:
+        local_rank = int(os.environ["LOCAL_RANK"])
+        if dist.is_available() and dist.is_initialized():
+            rank = dist.get_rank()
+            world_size = dist.get_world_size()
+    # Then check if distributed is initialized
+    elif dist.is_available() and dist.is_initialized():
+        rank = dist.get_rank()
+        world_size = dist.get_world_size()
+
+    return rank, world_size, local_rank
+
+
+def print_with_rank(*args, **kwargs):
+    """
+    Print function with rank information for distributed training.
+
+    Automatically detects the current process rank and includes it in the output.
+    Works with torchrun, torch.distributed, or single process environments.
+
+    Args:
+        *args: Arguments to print
+        **kwargs: Keyword arguments for print function
+
+    Example:
+        print_with_rank("Model loaded successfully")
+        # Single node: [Rank 0/4] Model loaded successfully
+        # Multi-node:  [Rank 0/8, Local 0] Model loaded successfully
+    """
+    rank, world_size, local_rank = _get_distributed_info()
+
+    # Format rank information
+    if rank >= 0:
+        # Show local_rank only when it's different from rank (multi-node scenario)
+        if local_rank >= 0 and local_rank != rank:
+            prefix = f"[Rank {rank}/{world_size}, Local {local_rank}]"
+        else:
+            prefix = f"[Rank {rank}/{world_size}]"
+    else:
+        prefix = "[Single Process]"
+
+    # Print with rank prefix
+    print(prefix, *args, **kwargs)
+
+
+def decide_device_for_distributed():
+    """
+    Decide the appropriate device for model in distributed training context (torchrun).
+
+    Device selection priority:
+    1. LOCAL_RANK environment variable (torchrun launcher)
+    2. Distributed rank (if torch.distributed is initialized)
+    3. cuda:0 or cpu (single process fallback)
+
+    Returns:
+        str: Device string like 'cuda:0' or 'cpu'
+
+    Example:
+        device = decide_device_for_distributed()
+        model.to(device)
+    """
+    rank, _, local_rank = _get_distributed_info()
+
+    # Determine device based on distributed info
+    if local_rank >= 0:
+        # torchrun with LOCAL_RANK
+        device = f"cuda:{local_rank}"
+    elif rank >= 0:
+        # Distributed initialized without LOCAL_RANK
+        device = f"cuda:{rank}"
+    else:
+        # Single process fallback
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+
+    return device

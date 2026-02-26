@@ -63,6 +63,7 @@ class AWQSearch:
         best_ratio = -1
         best_scales = None
         dev = get_best_device()
+        block.to(dev)
         with torch.no_grad():
             if cache is not None:
                 origin_out = torch.ones_like(act)
@@ -97,7 +98,8 @@ class AWQSearch:
                     if layer.weight.dtype == torch.float8_e4m3fn:
                         w = weight_dequant(layer.weight, layer.weight_scale_inv)
                         layer.weight.data = w
-                    layer.weight.mul_(scales.view(1, -1))
+                    # Fix low_memory mode: ensure scales is on same device as weights
+                    layer.weight.mul_(scales.to(layer.weight.device).view(1, -1))
                     if type(layer) in self.observer_layer_classes:
                         quant_dequant_weight = pseudo_quantize_tensor(
                             layer.weight,
@@ -108,9 +110,9 @@ class AWQSearch:
 
                 for j in range(act.shape[0]):
                     new_act = act[j, :, :].unsqueeze(0).to(dev) / scales
-                    new_out[j, :, :] = self._get_out(
-                        layer_name, new_act, block, cache
-                    ).to(act.device)
+                    new_out[j, :, :] = self._get_out(layer_name, new_act, block, cache).to(
+                        act.device
+                    )
 
                 try:
                     loss = self.loss_function(origin_out, new_out).to(torch.float32)
@@ -130,7 +132,8 @@ class AWQSearch:
                     best_scales = scales
 
                 for layer, w in zip(layers, org_w):
-                    layer.weight.data = w.to(act.device)
+                    # Fix for low_memory mode: restore weights to GPU, not act.device
+                    layer.weight.data = w.to(dev)
 
         origin_out = origin_out.detach().cpu()
         new_out = w.detach().cpu()
@@ -144,7 +147,5 @@ class AWQSearch:
             best_scales = torch.ones(scales.shape, dtype=act.dtype)
             print_func("Cannot find better ratio.")
         else:
-            print_func(
-                "Best ratio :{}, minimal loss : {}.".format(best_ratio, best_error)
-            )
+            print_func("Best ratio :{}, minimal loss : {}.".format(best_ratio, best_error))
         return best_scales.detach().cpu()

@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import yaml
 
-from .utils import get_hf_config
+from .utils import get_hf_config, get_hf_model_path
 
 
 class CompressionMethod(str, Enum):
@@ -43,6 +43,7 @@ class QuantizationMethod(str, Enum):
     W4A8_FP8 = "w4a8_fp8"
     INT4_GPTAQ = "int4_gptaq"
     NVFP4 = "nvfp4"
+    W4A8_INT8 = "w4a8i8"
 
 
 @dataclass
@@ -60,8 +61,9 @@ class GlobalConfig:
     save_path: str = field(default="./output")
     # Shared max_seq_length configuration
     max_seq_length: int = field(default=2048)
-    hidden_size: int = field(default=2048)
+    hidden_size: int = field(default=4096)
     model_arch_type: str = field(default=None)
+    absolute_model_path: str = field(default=None)
     deploy_backend: str = field(default="vllm")
 
     def update(self, model_path: str = None, max_seq_length: int = None):
@@ -78,6 +80,7 @@ class GlobalConfig:
         if model_path:
             self.set_model_hidden_size(model_path)
             self.set_model_arch_type(model_path)
+            self.absolute_model_path = get_hf_model_path(model_path)
         if max_seq_length:
             self.set_max_seq_length(max_seq_length)
 
@@ -89,7 +92,22 @@ class GlobalConfig:
 
     def set_model_hidden_size(self, model_path) -> int:
         json_data = get_hf_config(model_path)
-        self.hidden_size = json_data["hidden_size"]
+        try:
+            if json_data["model_type"] in ["qwen3_vl", "qwen3_vl_moe"]:
+                self.hidden_size = json_data["text_config"]["hidden_size"]
+            elif (
+                json_data["architectures"][0]
+                if isinstance(json_data["architectures"], list)
+                else json_data["architectures"]
+            ) == "Qwen3OmniMoeForConditionalGeneration":
+                self.hidden_size = json_data["thinker_config"]["text_config"]["hidden_size"]
+            else:
+                self.hidden_size = json_data["hidden_size"]
+        except KeyError:
+            print(
+                "Warning: Failed to set model hidden size from config.json. "
+                f"Using default hidden size {self.hidden_size}."
+            )
 
     def set_model_arch_type(self, model_path) -> str:
         json_data = get_hf_config(model_path)
@@ -110,6 +128,8 @@ class ModelConfig:
         low_cpu_mem_usage: Use low memory loading for large models
         use_cache: Whether to use cache during model loading
         cache_dir: Directory for caching model files
+        use_audio_in_video: Whether to add audio track to a video file
+        attn_implementation: The attention implementation to use in the model
     """
 
     name: str
@@ -120,6 +140,8 @@ class ModelConfig:
     low_cpu_mem_usage: bool = field(default=True)
     use_cache: bool = field(default=False)
     cache_dir: Optional[str] = field(default=None)
+    use_audio_in_video: bool = field(default=False)
+    attn_implementation: str = field(default="default")
 
 
 @dataclass
@@ -232,9 +254,6 @@ class CompressionConfig:
         for method in self.name:
             # PTQ/QAT usually need calibration dataset
             if method in ["PTQ", "QAT"]:
-                # Check if dynamic quantization (usually doesn't need dataset)
-                if self.quantization and "dynamic" in self.quantization.name:
-                    continue
                 # Check if specific quantization helpers need dataset
                 if (
                     self.quantization
@@ -242,6 +261,9 @@ class CompressionConfig:
                     and "smooth" in self.quantization.quant_helpers
                 ):
                     return True
+                # Check if dynamic quantization (usually doesn't need dataset)
+                if self.quantization and "dynamic" in self.quantization.name:
+                    continue
                 # Default PTQ/QAT needs dataset
                 return True
         return False
@@ -273,16 +295,12 @@ class CompressionConfig:
 
         # Ensure name is now a list
         if not isinstance(self.name, list):
-            raise TypeError(
-                f"`name` must be a string or a list of strings, got {type(self.name)}"
-            )
+            raise TypeError(f"`name` must be a string or a list of strings, got {type(self.name)}")
 
         # Validate all elements in the list are strings
         for n in self.name:
             if not isinstance(n, str):
-                raise TypeError(
-                    f"All elements in `name` must be strings, found {type(n)}"
-                )
+                raise TypeError(f"All elements in `name` must be strings, found {type(n)}")
 
         # Further validate against predefined enumeration
         try:
@@ -460,9 +478,7 @@ class SlimConfigParser:
             infer_config=inference_conf,
         )
 
-    def _get_global_config(
-        self, config_dict, model_conf, dataset_conf=None
-    ) -> GlobalConfig:
+    def _get_global_config(self, config_dict, model_conf, dataset_conf=None) -> GlobalConfig:
         """
         Extract global configuration settings from the provided dictionary.
 
@@ -556,9 +572,7 @@ def parse_json_full_config(json_file_path: str) -> FullConfig:
     model_config = ModelConfig(**config_data["model_config"])
 
     # Parse compression configuration section
-    comp_config = parse_json_compression_config_section(
-        config_data["compression_config"]
-    )
+    comp_config = parse_json_compression_config_section(config_data["compression_config"])
 
     # Parse other configuration sections with default fallbacks
     dataset_config, global_config, infer_config = None, None, None

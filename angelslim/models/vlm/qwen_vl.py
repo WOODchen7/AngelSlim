@@ -21,7 +21,7 @@ from transformers import (
     Qwen2_5_VLForConditionalGeneration,
 )
 
-from ...compressor.quant.core import PTQVLMSaveVllmHF
+from ...compressor.quant.core import LossFilter, PTQVLMSaveVllmHF
 from ...utils import find_layers, print_info
 from ..base_model import BaseLLMModel
 from ..model_factory import SlimModelFactory
@@ -129,10 +129,9 @@ class QwenVL(BaseLLMModel):
             device = self.model.device
         print_info(f"device is {device}")
         if dataloader is not None:
+            loss_filter = LossFilter(processor=self.processor)
             with torch.no_grad():
-                for batch in tqdm(
-                    dataloader, desc="calibrating...", total=len(dataloader)
-                ):
+                for batch in tqdm(dataloader, desc="calibrating...", total=len(dataloader)):
                     inputs = {
                         "input_ids": batch["input_ids"].to(device),
                         "attention_mask": batch["attention_mask"].to(device),
@@ -153,10 +152,11 @@ class QwenVL(BaseLLMModel):
                             reduction="none",
                         )
 
-                        attention_mask = (
-                            attention_mask.view(-1).to(logits.device).float()
-                        )
+                        attention_mask = attention_mask.view(-1).to(logits.device).float()
                         loss = loss * attention_mask
+                        loss = loss_filter.filter_loss(
+                            loss=loss, labels=labels, model_type="QwenVL"
+                        )
                         avg_loss = loss.mean()
                         ppl = torch.exp(avg_loss)
 

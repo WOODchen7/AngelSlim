@@ -21,7 +21,7 @@ from ..kernels.python.quantizers import (
     fp8_per_block_quant_triton,
     fp8_per_token_group_quant_triton,
 )
-from .utils import QuantType, _ensure_deep_gemm
+from .utils import QuantType, _ensure_deep_gemm, _ensure_sgl_kernel
 
 FP8_MAX = float(torch.finfo(torch.float8_e4m3fn).max)
 FP8_MIN = float(torch.finfo(torch.float8_e4m3fn).min)
@@ -60,10 +60,12 @@ def fp8_per_token_group_quant(
     scale_tma_aligned: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
-    Per-token-group FP8 quantization using triton kernel.
+    Per-token-group FP8 quantization with automatic backend selection.
+
+    Uses Triton kernel on GPU when available, otherwise falls back to PyTorch.
 
     Args:
-        x: Input tensor on GPU
+        x: Input tensor
         group_size: Size of each quantization group
         eps: Small value to avoid division by zero
         dtype: Target FP8 data type
@@ -72,11 +74,9 @@ def fp8_per_token_group_quant(
 
     Returns:
         Tuple of (quantized_tensor, scale_tensor)
-
-    Raises:
-        AssertionError: If input tensor is not on GPU
     """
-    assert x.is_cuda, "x must be on GPU for fp8_per_token_group_quant_triton"
+    # fp8_per_token_group_quant_triton is automatically selected based on
+    # backend availability (Triton vs PyTorch) via __init__.py
     return fp8_per_token_group_quant_triton(
         x,
         group_size,
@@ -85,6 +85,41 @@ def fp8_per_token_group_quant(
         column_major_scales,
         scale_tma_aligned,
     )
+
+
+def fp8_per_channel_quant(weight: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Per-channel FP8 weight quantization (E4M3 format)
+
+    Args:
+        weight: Original weight tensor with shape [out_features, in_features]
+
+    Returns:
+        weight_quant: Quantized weight [out_features, in_features], dtype=float8_e4m3fn
+        weight_scale: Scale factors [out_features, 1], dtype=float32
+    """
+    abs_max = torch.abs(weight).amax(dim=1, keepdim=True)  # [out_features, 1]
+
+    weight_scale = abs_max / FP8_MAX
+    weight_scale = torch.clamp(weight_scale, min=1e-12)
+
+    weight_scaled = (weight / weight_scale).clamp(min=FP8_MIN, max=FP8_MAX)
+    weight_quant = weight_scaled.to(torch.float8_e4m3fn)
+
+    return weight_quant, weight_scale.float()
+
+
+def fp8_per_token_quant_sgl(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    m, k = x.shape
+    input_tensor_quant = torch.empty(
+        (m, k), dtype=torch.float8_e4m3fn, device="cuda", requires_grad=False
+    )
+    input_tensor_scale = torch.empty(
+        (m, 1), dtype=torch.float32, device="cuda", requires_grad=False
+    )
+    _sgl_kernel = _ensure_sgl_kernel()
+    _sgl_kernel.sgl_per_token_quant_fp8(x, input_tensor_quant, input_tensor_scale)
+    return input_tensor_quant, input_tensor_scale
 
 
 # pure torch implementation of block-wise FP8 quantization on cpu
@@ -225,9 +260,7 @@ def fp8_gemm_torch_tensor_token(
         output = output[0]
 
     if need_reshape:
-        output = output.reshape(
-            batch_size, output.shape[0] // batch_size, output.shape[1]
-        )
+        output = output.reshape(batch_size, output.shape[0] // batch_size, output.shape[1])
 
     return output
 
@@ -254,6 +287,35 @@ def fp8_weight_only_gemm(A, B, B_scale, bias, out_dtype):
     output = torch.nn.functional.linear(
         A.to(out_dtype),
         B.to(out_dtype) * B_scale.to(out_dtype),
+        bias=bias,
+    )
+
+    return output
+
+
+def fp8_gemm_sgl_token(A, A_scale, B, B_scale, out_dtype, bias):
+    """GEMM function for FP8 per-token-sgl quantization using sgl-kernel.
+
+    Args:
+        A: Input activation tensor
+        A_scale: Scale tensor for input activations
+        B: Weight tensor
+        B_scale: Scale tensor for weights
+        out_dtype: Output data type.
+        bias: Optional bias tensor
+
+    Returns:
+        torch.Tensor: Result of the GEMM operation.
+    """
+    _sgl_kernel = _ensure_sgl_kernel()
+    shape = (A.shape[0], B.shape[0])
+    output = torch.empty(shape, dtype=out_dtype, device=A.device, requires_grad=False)
+    output = _sgl_kernel.fp8_scaled_mm(
+        A,
+        B.t(),
+        A_scale,
+        B_scale.float(),
+        out_dtype,
         bias=bias,
     )
 
@@ -300,11 +362,12 @@ def fp8_gemm(
         if quant_type in (QuantType.FP8_PER_TENSOR, QuantType.FP8_PER_TOKEN):
             # Use torch native fp8 GEMM for per-tensor and per-token fp8 quantization
             return fp8_gemm_torch_tensor_token(A, A_scale, B, B_scale, out_dtype, bias)
+        elif quant_type == QuantType.FP8_PER_TOKEN_SGL:
+            # Use sgl-kernel for per-token-sgl fp8 quantization
+            return fp8_gemm_sgl_token(A, A_scale, B, B_scale, out_dtype, bias)
         elif quant_type == QuantType.FP8_PER_BLOCK:
             # Use deepgemm accelerated blockwise fp8 GEMM
-            return fp8_gemm_deepgemm_block(
-                A, A_scale, B, B_scale, out_dtype, bias, origin_shape
-            )
+            return fp8_gemm_deepgemm_block(A, A_scale, B, B_scale, out_dtype, bias, origin_shape)
     else:
         if quant_type == QuantType.FP8_PER_BLOCK:
             # Use triton kernel for blockwise fp8 quantization
@@ -324,7 +387,8 @@ def fp8_gemm(
         f"\n  native_fp8_support={native_fp8_support}.\n"
         "Supported combinations:\n"
         "  - native_fp8_support=True, "
-        "quant_type in [fp8-per-tensor, fp8-per-token, fp8-per-block]\n"
+        "quant_type in [fp8-per-tensor, fp8-per-token,"
+        " fp8-per-block, fp8-per-token-sgl]\n"
         "  - native_fp8_support=False, "
         "quant_type in [fp8-per-tensor, fp8-per-block]"
     )

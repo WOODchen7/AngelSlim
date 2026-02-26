@@ -21,7 +21,8 @@ from typing import Any, Dict, Optional
 import torch
 
 from .compressor import CompressorFactory
-from .compressor.speculative import BenchmarkConfig, BenchmarkEngine, BenchmarkMode
+from .compressor.speculative.benchmark import pytorch as pytorch_benchmark
+from .compressor.speculative.benchmark import vllm as vllm_benchmark
 from .data.dataloader import DataLoaderFactory
 from .models import SlimModelFactory
 from .utils import (
@@ -73,6 +74,8 @@ class Engine:
         cache_dir=None,
         deploy_backend="vllm",
         using_multi_nodes=False,
+        use_audio_in_video=False,
+        attn_implementation="default",
     ) -> Any:
         """Load pretrained model and tokenizer
         Args:
@@ -90,6 +93,8 @@ class Engine:
             cache_dir (str, optional): Directory to cache the model.
             deploy_backend (str): Backend for deployment, e.g., "torch", "vllm".
             using_multi_nodes (bool): Whether to use multi-nodes for calibration.
+            use_audio_in_video (bool): Whether to add audio track to a video file.
+            attn_implementation (str): The attention implementation to use in the model.
         """
         assert model_name, "model_name must be specified."
         assert model_path, "model_path must be specified."
@@ -101,7 +106,7 @@ class Engine:
 
         self.series = SlimModelFactory.get_series_by_models(model_name)
 
-        if self.series in ["LLM", "VLM"]:
+        if self.series in ["LLM", "VLM", "Audio"]:
             if model:
                 assert tokenizer, " If model is set, tokenizer must be also set."
                 self.slim_model.tokenizer = tokenizer
@@ -116,13 +121,17 @@ class Engine:
                     using_multi_nodes=using_multi_nodes,
                 )
                 self.model_path = model_path
-        elif self.series == "Diffusion":
+        elif self.series in ["Omni"]:
             if not model:
                 self.slim_model.from_pretrained(
                     model_path,
                     torch_dtype=torch_dtype,
-                    cache_dir=cache_dir,
+                    device_map=device_map,
+                    trust_remote_code=trust_remote_code,
+                    use_audio_in_video=use_audio_in_video,
+                    attn_implementation=attn_implementation,
                 )
+                self.model_path = model_path
         else:
             raise ValueError(f"Unsupported series: {self.series}")
 
@@ -138,6 +147,9 @@ class Engine:
         num_samples=128,
         shuffle=True,
         inference_settings=None,
+        use_audio_in_video=False,
+        model_name=None,
+        quantization_config=None,
     ) -> Optional[Any]:
         """Prepare compression dataset"""
         if custom_dataloader is not None:
@@ -151,7 +163,7 @@ class Engine:
             data_type=data_type,
             processor=(
                 self.slim_model.processor
-                if self.series == "VLM"
+                if self.series in ["VLM", "Omni", "Audio"]
                 else self.slim_model.tokenizer
             ),
             device=self.slim_model.model.device,
@@ -161,6 +173,9 @@ class Engine:
             num_samples=num_samples,
             data_source=data_path,
             inference_settings=inference_settings,
+            use_audio_in_video=use_audio_in_video,
+            model_name=model_name,
+            quantization_config=quantization_config,
         )
         self.max_seq_length = max_length
 
@@ -192,7 +207,7 @@ class Engine:
                     f"Compression method '{method_name}' not registered. "
                     f"Available methods: {CompressorFactory.get_available_compressor()}"
                 )
-        if self.series in ["LLM", "VLM"]:
+        if self.series in ["LLM", "VLM", "Omni", "Audio"]:
             global_config.update(self.model_path, self.max_seq_length)
 
         if default_method:
@@ -204,12 +219,9 @@ class Engine:
             slim_config = {
                 "global_config": global_config,
                 "compress_config": compress_config,
-                "model_path": self.model_path,
             }
         self.compress_type = compress_names
-        self.only_inference = (
-            compress_config.only_inference if compress_config else False
-        )
+        self.only_inference = compress_config.only_inference if compress_config else False
         # Create compressor by CompressorFactory
         self.compressor = CompressorFactory.create(
             compress_names, self.slim_model, slim_config=slim_config
@@ -219,9 +231,7 @@ class Engine:
     def run(self) -> Any:
         """Execute compression pipeline"""
         if not self.compressor:
-            raise RuntimeError(
-                "Compressor not initialized. Call prepare_compressor() first"
-            )
+            raise RuntimeError("Compressor not initialized. Call prepare_compressor() first")
         if isinstance(self.compressor, str):
             compressors = [self.compressor]
         elif isinstance(self.compressor, list):
@@ -236,9 +246,7 @@ class Engine:
                     f"Compression type {self.compress_type} is not implemented"
                 )
 
-    def save(
-        self, save_path: Optional[str] = None, config: Optional[dataclass] = None
-    ) -> None:
+    def save(self, save_path: Optional[str] = None, config: Optional[dataclass] = None) -> None:
         """Save compressed model and tokenizer
         Args:
             save_path (str, optional): Path to save the compressed model and tokenizer.
@@ -266,15 +274,11 @@ class Engine:
                 "angelslim": get_package_info("angelslim"),
                 "torch": get_package_info("torch"),
                 "transformers": get_package_info("transformers"),
-                "torch_cuda_version": (
-                    torch.version.cuda if torch.cuda.is_available() else None
-                ),
+                "torch_cuda_version": (torch.version.cuda if torch.cuda.is_available() else None),
             }
             config_dict["model_config"]["model_path"] = "Base Model Path"
             config_dict["global_config"]["save_path"] = "Save Model Path"
-            if "dataset_config" in config_dict and isinstance(
-                config_dict["dataset_config"], dict
-            ):
+            if "dataset_config" in config_dict and isinstance(config_dict["dataset_config"], dict):
                 config_dict["dataset_config"]["data_path"] = "Data Path"
             with open(os.path.join(save_path, "angelslim_config.json"), "w") as f:
                 json.dump(config_dict, f, indent=4)
@@ -349,9 +353,7 @@ class InferEngine(Engine):
             compress_config=slim_config.compression_config,
         )
 
-        self.series = SlimModelFactory.get_series_by_models(
-            slim_config.model_config.name
-        )
+        self.series = SlimModelFactory.get_series_by_models(slim_config.model_config.name)
 
     def generate(self, input_prompt: str, **kwargs) -> Any:
         """Run inference with the compressed model
@@ -363,17 +365,11 @@ class InferEngine(Engine):
 
         if self.series in ["LLM", "VLM"]:
             return self.slim_model.generate(
-                input_ids=self.slim_model.tokenizer(
-                    input_prompt, return_tensors="pt"
-                ).input_ids,
+                input_ids=self.slim_model.tokenizer(input_prompt, return_tensors="pt").input_ids,
                 **kwargs,
             )
-        elif self.series == "Diffusion":
-            return self.slim_model.generate(input_prompt, **kwargs)
         else:
-            raise NotImplementedError(
-                f"Series {self.series} is not implemented for inference"
-            )
+            raise NotImplementedError(f"Series {self.series} is not implemented for inference")
 
 
 class SpecEngine:
@@ -382,10 +378,29 @@ class SpecEngine:
     Integrates BenchmarkEngine with additional workflow management
     """
 
-    def __init__(self, config: Optional[BenchmarkConfig] = None):
+    def __init__(self, config=None, deploy_backend: str = "pytorch"):
+        """
+        Initialize SpecEngine
+
+        Args:
+            config: BenchmarkConfig instance (optional)
+            deploy_backend: Backend to use ('pytorch' or 'vllm')
+        """
         self.config = config
         self.benchmark_engine = None
         self.results = {}
+        self.deploy_backend = deploy_backend.lower()
+
+        if self.deploy_backend == "pytorch":
+            self.BenchmarkConfig = pytorch_benchmark.BenchmarkConfig
+            self.BenchmarkEngine = pytorch_benchmark.BenchmarkEngine
+            self.BenchmarkMode = pytorch_benchmark.BenchmarkMode
+        elif self.deploy_backend == "vllm":
+            self.BenchmarkConfig = vllm_benchmark.BenchmarkConfig
+            self.BenchmarkEngine = vllm_benchmark.BenchmarkEngine
+            self.BenchmarkMode = vllm_benchmark.BenchmarkMode
+        else:
+            raise ValueError(f"Unsupported deploy_backend: {deploy_backend}")
 
     def setup_benchmark(
         self,
@@ -395,7 +410,7 @@ class SpecEngine:
         bench_name: str = "mt_bench",
         output_dir: Optional[str] = None,
         **kwargs,
-    ) -> BenchmarkConfig:
+    ):
         """
         Setup benchmark configuration
 
@@ -419,29 +434,27 @@ class SpecEngine:
         }
         config_dict.update(kwargs)
 
-        self.config = BenchmarkConfig(**config_dict)
-        self.benchmark_engine = BenchmarkEngine(self.config)
+        self.config = self.BenchmarkConfig(**config_dict)
+        if self.config.is_tts:
+            self.BenchmarkEngine = pytorch_benchmark.TTSBenchmarkEngine
+        self.benchmark_engine = self.BenchmarkEngine(self.config)
 
         return self.config
 
     def run_eagle_benchmark(self) -> Dict[str, Any]:
         """Run Eagle speculative decoding benchmark only"""
         if not self.benchmark_engine:
-            raise RuntimeError(
-                "Benchmark not configured. Call setup_benchmark() first."
-            )
+            raise RuntimeError("Benchmark not configured. Call setup_benchmark() first.")
 
-        self.results = self.benchmark_engine.run_benchmark(BenchmarkMode.EAGLE)
+        self.results = self.benchmark_engine.run_benchmark(self.BenchmarkMode.EAGLE)
         return self.results
 
     def run_baseline_benchmark(self) -> Dict[str, Any]:
         """Run baseline benchmark only"""
         if not self.benchmark_engine:
-            raise RuntimeError(
-                "Benchmark not configured. Call setup_benchmark() first."
-            )
+            raise RuntimeError("Benchmark not configured. Call setup_benchmark() first.")
 
-        self.results = self.benchmark_engine.run_benchmark(BenchmarkMode.BASELINE)
+        self.results = self.benchmark_engine.run_benchmark(self.BenchmarkMode.BASELINE)
         return self.results
 
     def run_full_benchmark(self) -> Dict[str, Any]:
@@ -452,11 +465,9 @@ class SpecEngine:
             Dictionary containing all results and metrics
         """
         if not self.benchmark_engine:
-            raise RuntimeError(
-                "Benchmark not configured. Call setup_benchmark() first."
-            )
+            raise RuntimeError("Benchmark not configured. Call setup_benchmark() first.")
 
-        self.results = self.benchmark_engine.run_benchmark(BenchmarkMode.BOTH)
+        self.results = self.benchmark_engine.run_benchmark(self.BenchmarkMode.BOTH)
         return self.results
 
     def calculate_acceptance_length(self, eagle_file: Optional[str] = None) -> float:
@@ -471,9 +482,7 @@ class SpecEngine:
             Average acceptance length
         """
         if not self.benchmark_engine:
-            raise RuntimeError(
-                "Benchmark not configured. Call setup_benchmark() first."
-            )
+            raise RuntimeError("Benchmark not configured. Call setup_benchmark() first.")
 
         if eagle_file is None:
             eagle_file = self.benchmark_engine.eagle_file
@@ -498,9 +507,7 @@ class SpecEngine:
             Speedup ratio
         """
         if not self.benchmark_engine:
-            raise RuntimeError(
-                "Benchmark not configured. Call setup_benchmark() first."
-            )
+            raise RuntimeError("Benchmark not configured. Call setup_benchmark() first.")
 
         if baseline_file is None:
             baseline_file = self.benchmark_engine.baseline_file

@@ -25,6 +25,7 @@ __all__ = [
     "should_quantize_layer",
     "_compile_pattern",
     "_ensure_deep_gemm",
+    "_ensure_sgl_kernel",
     "QuantType",
 ]
 
@@ -34,19 +35,19 @@ class QuantType:
     FP8_PER_TOKEN = "fp8-per-token"
     FP8_PER_BLOCK = "fp8-per-block"
     FP8_PER_TENSOR_WEIGHT_ONLY = "fp8-per-tensor-weight-only"
+    FP8_PER_TOKEN_SGL = "fp8-per-token-sgl"
     VALID_TYPES = [
         FP8_PER_TENSOR,
         FP8_PER_TOKEN,
         FP8_PER_BLOCK,
         FP8_PER_TENSOR_WEIGHT_ONLY,
+        FP8_PER_TOKEN_SGL,
     ]
 
     @classmethod
     def validate(cls, quant_type: str):
         if quant_type not in cls.VALID_TYPES:
-            raise ValueError(
-                f"Invalid quant_type: {quant_type}. Valid types: {cls.VALID_TYPES}"
-            )
+            raise ValueError(f"Invalid quant_type: {quant_type}. Valid types: {cls.VALID_TYPES}")
 
 
 def replace_module(model: torch.nn.Module, name: str, new_module: torch.nn.Module):
@@ -73,9 +74,7 @@ def cleanup_memory():
     torch.cuda.empty_cache()
 
 
-def _compile_pattern(
-    pattern: Union[str, re.Pattern], case_sensitive: bool = False
-) -> re.Pattern:
+def _compile_pattern(pattern: Union[str, re.Pattern], case_sensitive: bool = False) -> re.Pattern:
     """
     Compile a pattern (string or pre-compiled pattern) into a regex pattern object.
 
@@ -169,5 +168,30 @@ def _ensure_deep_gemm():
             (
                 "deep_gemm is required for 'fp8-per-block' quantization with "
                 "native_fp8_support, but was not found. Please install deep_gemm first."
+            )
+        ) from e
+
+
+_sgl_kernel_cached = None
+
+
+def _ensure_sgl_kernel():
+    """
+    Lazy, safe import of sgl_kernel with process-level caching. Returns the module
+    if available, otherwise raises a clear error.
+    """
+    global _sgl_kernel_cached
+    if _sgl_kernel_cached is not None:
+        return _sgl_kernel_cached
+    try:
+        import sgl_kernel
+
+        _sgl_kernel_cached = sgl_kernel
+        return _sgl_kernel_cached
+    except ImportError as e:
+        raise ImportError(
+            (
+                "sgl_kernel is required for 'fp8-per-token-sgl' quantization with "
+                "native_fp8_support, but was not found. Please install sgl_kernel first"
             )
         ) from e

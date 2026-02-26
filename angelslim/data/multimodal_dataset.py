@@ -36,9 +36,13 @@ class MultiModalDataset(BaseDataset):
         num_samples: int = -1,
         data_source: Union[str, Dict] = None,
         is_hf_dataset: bool = False,
+        model_name: str = None,
+        quantization_config: str = None,
     ):
         super().__init__(processor, device, max_length)
         self.is_hf_dataset = is_hf_dataset
+        self.model_name = model_name
+        self.quant_algo = quantization_config.name if quantization_config else None
 
         if is_hf_dataset:
             self._load_hf_dataset(data_source, num_samples)
@@ -47,7 +51,7 @@ class MultiModalDataset(BaseDataset):
 
     def _load_file_based_dataset(self, data_path: str, num_samples: int):
         """Load dataset from local file system"""
-        image_dir = os.path.join(os.path.dirname(data_path), "images")
+        self.data_path = data_path
         line_count = 0
 
         with open(data_path, "r") as f:
@@ -56,33 +60,98 @@ class MultiModalDataset(BaseDataset):
                     break
 
                 data = json.loads(line.strip())
+
+                # Validate format
+                assert "messages" in data or "question" in data, "JSON format error"
+
+                try:
+                    # Prepare messages
+                    messages, tools = self._prepare_messages(data)
+
+                    self._process_and_append(messages, tools)
+                    line_count += 1
+                except Exception as e:
+                    print(f"Warning: processing data: {e}, continue to next data")
+
+    def _prepare_messages(self, data: Dict) -> List[Dict]:
+        image_dir = os.path.join(os.path.dirname(self.data_path), "images")
+        if "question" in data:
+            # Prepare chat messages with image
+            messages = []
+            if "system_prompt" in data:
+                messages.extend(
+                    [
+                        {
+                            "role": "system",
+                            "content": [{"type": "text", "text": data["system_prompt"]}],
+                        }
+                    ]
+                )
+            if "img_path" in data:
                 image_path = os.path.join(image_dir, data["img_path"])
+                messages.extend(
+                    [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "image", "image": image_path},
+                                {
+                                    "type": "text",
+                                    "text": data["question"].replace("<image>", ""),
+                                },
+                            ],
+                        },
+                        {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": data["answer"]}],
+                        },
+                    ]
+                )
+            else:
+                messages.extend(
+                    [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": data["question"]},
+                            ],
+                        },
+                        {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": data["answer"]}],
+                        },
+                    ]
+                )
+        elif "messages" in data:
+            messages = data["messages"]
+            for message in messages:
+                if message["role"] == "user":
+                    for content in message["content"]:
+                        if content["type"] == "image":
+                            content["image"] = os.path.join(image_dir, content["image"])
+        else:
+            raise ValueError("Invalid data format")
 
-                # Prepare chat messages with image
-                messages = [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "image", "image": image_path},
-                            {
-                                "type": "text",
-                                "text": data["question"].replace("<image>", ""),
-                            },
-                        ],
-                    },
-                    {"role": "assistant", "content": data["answer"]},
-                ]
+        # adapt to hunyuan_vl
+        if self.model_name in ["HunyuanVL"]:
+            for message in messages:
+                if message["role"] == "assistant" or message["role"] == "system":
+                    message["content"] = message["content"][0]["text"]
 
-                self._process_and_append(messages)
-                line_count += 1
+        # extract tools if exist
+        try:
+            tools = data.get("tools", None)
+            if tools is not None:
+                tools = json.loads(tools)
+        except Exception as e:
+            print(f"Error extracting tools: {e}")
+        return messages, tools
 
     def _load_hf_dataset(self, dataset: str, num_samples: int):
         """Load dataset from Hugging Face format"""
         dataset = load_dataset(dataset, split="test")
         total_samples = (
-            min(num_samples, len(dataset["query"]))
-            if num_samples > 0
-            else len(dataset["query"])
+            min(num_samples, len(dataset["query"])) if num_samples > 0 else len(dataset["query"])
         )
 
         for i in tqdm(range(total_samples), desc="Processing HF Dataset"):
@@ -101,27 +170,64 @@ class MultiModalDataset(BaseDataset):
             ]
             self._process_and_append(messages)
 
-    def _process_and_append(self, messages: List[Dict]):
+    def _process_and_append(self, messages: List[Dict], tools=None):
         """Process messages and append to dataset"""
-        text = self.processor.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
 
-        # Extract vision info
-        image_inputs, video_inputs = qwen_vl_utils.process_vision_info(messages)
+        # max_length padding for int4 gptq, gptaq and awq
+        if "int4_" in self.quant_algo:
+            padding = "max_length"
+        else:
+            padding = True
 
-        # Process inputs
-        inputs = self.processor(
-            text=[text],
-            images=image_inputs,
-            videos=video_inputs,
-            padding="max_length",
-            truncation=True,
-            return_tensors="pt",
-            max_length=self.max_length,
-        )
+        if self.model_name in ["Qwen3VL", "Qwen3VLMoE"]:
+            inputs = self.processor.apply_chat_template(
+                messages,
+                tools=tools,
+                tokenize=True,
+                add_generation_prompt=True,
+                return_dict=True,
+                padding=padding,
+                truncation=True,
+                return_tensors="pt",
+                max_length=self.max_length,
+            )
+        elif self.model_name in ["HunyuanVL"]:
+            text = self.processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            image_inputs, _ = self._extract_vision_info(messages)
 
-        inputs["labels"] = inputs["input_ids"]
+            # Process inputs
+            inputs = self.processor(
+                text=[text],
+                images=image_inputs,
+                padding=padding,
+                truncation=True,
+                return_tensors="pt",
+                max_length=self.max_length,
+            )
+        else:
+            text = self.processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+
+            # Extract vision info
+            image_inputs, video_inputs = qwen_vl_utils.process_vision_info(messages)
+
+            # Process inputs
+            inputs = self.processor(
+                text=[text],
+                images=image_inputs,
+                videos=video_inputs,
+                padding=padding,
+                truncation=True,
+                return_tensors="pt",
+                max_length=self.max_length,
+            )
+
+        labels = inputs["input_ids"].roll(shifts=-1, dims=-1)
+        labels[:, -1] = -100
+        inputs["labels"] = labels
 
         self.data.append(inputs)
 
@@ -143,9 +249,7 @@ class MultiModalDataset(BaseDataset):
                             img = Image.open(item["image"])
                             image_paths.append(img)
                         except ValueError as e:
-                            raise ValueError(
-                                f"Could not open image file: {item['image']}, {e}"
-                            )
+                            raise ValueError(f"Could not open image file: {item['image']}, {e}")
                     elif isinstance(item["image"], Image.Image):
                         image_paths.append(item["image"])
                 elif item.get("type") == "video":

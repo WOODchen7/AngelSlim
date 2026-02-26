@@ -23,12 +23,14 @@ import tqdm
 from .modules import FP8DynamicLinear, FP8WeightOnlyLinear
 from .quant_func import (
     fp8_per_block_quant,
+    fp8_per_channel_quant,
     fp8_per_tensor_quant,
     fp8_per_token_group_quant,
 )
 from .utils import (
     QuantType,
     _ensure_deep_gemm,
+    _ensure_sgl_kernel,
     cleanup_memory,
     load_fp8_scales,
     load_quantized_model,
@@ -82,8 +84,7 @@ class DynamicDiTQuantizer:
             self.native_fp8_support = native_fp8_support
         else:
             self.native_fp8_support = (
-                torch.cuda.is_available()
-                and torch.cuda.get_device_capability() >= (8, 9)
+                torch.cuda.is_available() and torch.cuda.get_device_capability() >= (8, 9)
             )
 
         self.quantize_linear_module = self._set_quantize_linear_module()
@@ -106,6 +107,10 @@ class DynamicDiTQuantizer:
                 linear.weight, linear.weight.shape[-1]
             )
             weight_scale = weight_scale.t()
+        elif self.quant_type == QuantType.FP8_PER_TOKEN_SGL:
+            if self.native_fp8_support:
+                _ensure_sgl_kernel()
+            quant_weight, weight_scale = fp8_per_channel_quant(linear.weight)
         elif self.quant_type == QuantType.FP8_PER_BLOCK:
             if self.native_fp8_support:
                 _ensure_deep_gemm()
@@ -122,14 +127,12 @@ class DynamicDiTQuantizer:
         model.to(torch.bfloat16)
         assert scale is not None, "scale is required"
         self.fp8_scales_map = load_fp8_scales(scale)
-        for name, module in tqdm.tqdm(
-            list(model.named_modules()), desc="converting linear"
-        ):
+        for name, module in tqdm.tqdm(list(model.named_modules()), desc="converting linear"):
             if isinstance(module, torch.nn.Linear) and self.layer_filter(name):
                 # Prefer $name.weight_scale, fallback to "$name" key if needed
-                s = self.fp8_scales_map.get(
-                    f"{name}.weight_scale"
-                ) or self.fp8_scales_map.get(name)
+                s = self.fp8_scales_map.get(f"{name}.weight_scale") or self.fp8_scales_map.get(
+                    name
+                )
                 if s is None:
                     continue
                 # import pdb; pdb.set_trace()
@@ -179,6 +182,8 @@ class DynamicDiTQuantizer:
         ), "Currently only FP8_PER_TENSOR is supported for export"
         self.convert_linear(model)
         save_quantized_model(model, save_path, self.fp8_scales_map)
+        logger.info(f"Quantized model saved to {save_path}")
+        logger.info(f"Quantized scales saved to {save_path}/fp8_scales.safetensors")
 
     @staticmethod
     def load_quantized_model(model_class, save_path: str, device: str = "cpu"):

@@ -54,9 +54,7 @@ def infer(config, args):
     Evaluate the compression process.
     This function is a placeholder for future evaluation logic.
     """
-    assert (
-        config or args.model_path
-    ), "Please provide a model path or a configuration file."
+    assert config or args.model_path, "Please provide a model path or a configuration file."
     slim_engine = InferEngine()
 
     if config:
@@ -89,21 +87,9 @@ def infer(config, args):
         slim_engine.from_pretrained(model_path=args.model_path)
 
     if config and infer_config:
-        output = slim_engine.generate(args.input_prompt, **infer_config.__dict__)
+        _ = slim_engine.generate(args.input_prompt, **infer_config.__dict__)
     else:
-        output = slim_engine.generate(args.input_prompt)
-    if slim_engine.series == "Diffusion":
-        # Save the generated image
-        if config and global_config:
-            save_path = os.path.join(global_config.save_path, "output_image.png")
-        else:
-            save_path = os.path.join(args.save_path, "output_image.png")
-
-        # Ensure the directory exists
-        if save_path:
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
-
-        output.save(save_path)
+        _ = slim_engine.generate(args.input_prompt)
 
 
 if __name__ == "__main__":

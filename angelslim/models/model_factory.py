@@ -22,7 +22,7 @@ class SlimModelFactory:
     registry: Dict[str, Type] = {}
     series_registry: Dict[str, str] = {}
 
-    ALLOWED_SERIES = ("LLM", "VLM", "Diffusion")
+    ALLOWED_SERIES = ("LLM", "VLM", "Diffusion", "Omni", "Audio")
 
     @classmethod
     def register(cls, model_class: Type) -> Type:
@@ -39,6 +39,10 @@ class SlimModelFactory:
             series = "VLM"
         elif "diffusion" in module_path:
             series = "Diffusion"
+        elif "omni" in module_path:
+            series = "Omni"
+        elif "audio" in module_path:
+            series = "Audio"
         else:
             raise ValueError(
                 f"model_class '{class_name}' is not in a valid series: {cls.ALLOWED_SERIES}"  # noqa: E501
@@ -59,9 +63,7 @@ class SlimModelFactory:
         """Create an instance of the specified model"""
         if model_name not in cls.registry:
             available = ", ".join(cls.registry.keys())
-            raise ValueError(
-                f"Unknown model: '{model_name}'. Available models: {available}"
-            )
+            raise ValueError(f"Unknown model: '{model_name}'. Available models: {available}")
 
         return cls.registry[model_name](
             model=model,
@@ -74,9 +76,7 @@ class SlimModelFactory:
         """Get the class for a registered model"""
         if model_name not in cls.registry:
             available = ", ".join(cls.registry.keys())
-            raise ValueError(
-                f"Unknown model: '{model_name}'. Available models: {available}"
-            )
+            raise ValueError(f"Unknown model: '{model_name}'. Available models: {available}")
         return cls.registry[model_name]
 
     @classmethod
@@ -89,7 +89,5 @@ class SlimModelFactory:
         """Get all model classes for a specific series"""
         if model_name not in cls.registry:
             available = ", ".join(cls.registry.keys())
-            raise ValueError(
-                f"Unknown model: '{model_name}'. Available models: {available}"
-            )
+            raise ValueError(f"Unknown model: '{model_name}'. Available models: {available}")
         return cls.series_registry.get(model_name, [])

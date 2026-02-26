@@ -12,5 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+from .hunyuan_vl import HunyuanVL  # noqa: F401
+from .qwen3_vl import Qwen3VL  # noqa: F401
+from .qwen3_vl_moe import Qwen3VLMoE  # noqa: F401
 from .qwen_vl import QwenVL  # noqa: F401

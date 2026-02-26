@@ -13,5 +13,31 @@
 # limitations under the License.
 
 from .benchmark import BenchmarkConfig, BenchmarkEngine, BenchmarkMode
+from .train import (
+    DatasetManager,
+    DraftModelConfig,
+    Eagle3TrainerFactory,
+    TargetHead,
+    convert_sharegpt_data,
+    convert_ultrachat_data,
+    create_draft_model,
+    create_target_model,
+    data_generation_work_flow,
+    get_supported_chat_template_type_strings,
+)
 
-__all__ = ["BenchmarkEngine", "BenchmarkConfig", "BenchmarkMode"]
+__all__ = [
+    "BenchmarkEngine",
+    "BenchmarkConfig",
+    "BenchmarkMode",
+    "create_draft_model",
+    "DraftModelConfig",
+    "create_target_model",
+    "Eagle3TrainerFactory",
+    "data_generation_work_flow",
+    "convert_sharegpt_data",
+    "convert_ultrachat_data",
+    "DatasetManager",
+    "get_supported_chat_template_type_strings",
+    "TargetHead",
+]

@@ -26,7 +26,7 @@ from ..compressor.quant.core import QuantConfig
 from ..compressor.quant.modules import NVFP4QDQModule, QDQModule
 from ..utils import common_prefix, print_info
 
-__all__ = ["BaseLLMModel", "BaseDiffusionModel"]
+__all__ = ["BaseLLMModel"]
 
 
 class BaseLLMModel(metaclass=ABCMeta):
@@ -84,9 +84,7 @@ class BaseLLMModel(metaclass=ABCMeta):
                 - compress_config: the configuration for compression.
                 - global_config: the global configuration for the model.
         """
-        quant_config = QuantConfig(
-            slim_config["compress_config"], slim_config["global_config"]
-        )
+        quant_config = QuantConfig(slim_config["compress_config"], slim_config["global_config"])
         self.quant_config = quant_config
         self.act_scales_dict = {}
         self.weight_scales_dict = {}
@@ -141,11 +139,12 @@ class BaseLLMModel(metaclass=ABCMeta):
                 input_scale=act_scale,
             )
         else:
-            print_info(
-                "current {} deploy_backend not support".format(self.deploy_backend)
-            )
+            print_info("current {} deploy_backend not support".format(self.deploy_backend))
             raise NotImplementedError
         return q_linear
+
+    def get_moe_qdq_module(self, sub_layer, name):
+        return sub_layer
 
     def get_nvfp4_qdq_module(self, sub_layer, name):
         act_scale, weight_scale, weight_scale_2 = None, None, None
@@ -166,9 +165,7 @@ class BaseLLMModel(metaclass=ABCMeta):
                 input_scale=act_scale,
             )
         else:
-            print_info(
-                "current {} deploy_backend not support".format(self.deploy_backend)
-            )
+            print_info("current {} deploy_backend not support".format(self.deploy_backend))
             raise NotImplementedError
         return q_linear
 
@@ -181,8 +178,7 @@ class BaseLLMModel(metaclass=ABCMeta):
         return [
             k
             for k in observe_names
-            if k.startswith(self.block_name)
-            and k.split(".")[-2] + "." + k.split(".")[-1] in names
+            if k.startswith(self.block_name) and k.split(".")[-2] + "." + k.split(".")[-1] in names
         ]
 
     def get_quant_config(self):
@@ -207,19 +203,13 @@ class BaseLLMModel(metaclass=ABCMeta):
         w_quant_algo = w.split("_")[0] if w is not None else None
         c_quant_algo = c.split("_")[0] if c is not None else None
         a_quant_bits = (
-            int(re.search(r"\d+", a_quant_algo).group())
-            if a_quant_algo is not None
-            else None
+            int(re.search(r"\d+", a_quant_algo).group()) if a_quant_algo is not None else None
         )
         w_quant_bits = (
-            int(re.search(r"\d+", w_quant_algo).group())
-            if w_quant_algo is not None
-            else None
+            int(re.search(r"\d+", w_quant_algo).group()) if w_quant_algo is not None else None
         )
         c_quant_bits = (
-            int(re.search(r"\d+", c_quant_algo).group())
-            if c_quant_algo is not None
-            else None
+            int(re.search(r"\d+", c_quant_algo).group()) if c_quant_algo is not None else None
         )
         a_quant_method = a.split("_")[1] if a is not None else None
         w_quant_method = w.split("_")[1] if w is not None else None
@@ -279,9 +269,7 @@ class BaseLLMModel(metaclass=ABCMeta):
 
         if dataloader is not None:
             with torch.no_grad():
-                for batch in tqdm(
-                    dataloader, desc="calibrating...", total=len(dataloader)
-                ):
+                for batch in tqdm(dataloader, desc="calibrating...", total=len(dataloader)):
                     inputs = batch["input_ids"].to(device)
                     labels = batch["labels"].to(device)
                     attention_mask = batch["attention_mask"].to(device)
@@ -295,9 +283,7 @@ class BaseLLMModel(metaclass=ABCMeta):
                             reduction="none",
                         )
 
-                        attention_mask = (
-                            attention_mask.view(-1).to(logits.device).float()
-                        )
+                        attention_mask = attention_mask.view(-1).to(logits.device).float()
                         loss = loss * attention_mask
                         avg_loss = loss.mean()
                         ppl = torch.exp(avg_loss)
@@ -357,54 +343,3 @@ class BaseLLMModel(metaclass=ABCMeta):
 
     def __getattr__(self, item):
         return super().__getattr__(item)
-
-
-class BaseDiffusionModel(BaseLLMModel):
-    """
-    Base class for diffusion model compression, providing common functionalities
-    such as initialization, quantization configuration, and model handling.
-    Args:
-        model (torch.nn.Module, optional): the model to be compressed.
-            If not provided, the model will be built from `model_path`.
-        deploy_backend (str, optional): deploy_backend for model compression.
-    """
-
-    def __init__(
-        self,
-        model: Optional[torch.nn.Module] = None,
-        deploy_backend: Optional[str] = "huggingface",
-    ):
-        super().__init__(
-            model=model,
-            deploy_backend=deploy_backend,
-        )
-        assert deploy_backend in [
-            "huggingface",
-            "tensorrt",
-        ], f"Unsupported deploy backend {deploy_backend}"
-        self.deploy_backend = deploy_backend
-        self.model = model
-        self.modal_type = "Diffusion"
-
-    @staticmethod
-    def from_pretrained(self, model_path, **kwargs):
-        """
-        Load a pretrained diffusion model.
-        Args:
-            model_path (str): Path to the pretrained model.
-        """
-        raise NotImplementedError("This method should be implemented in subclasses.")
-
-    @abstractmethod
-    def get_observer_layers(self):
-        pass
-
-    @abstractmethod
-    def get_save_func(self):
-        pass
-
-    def skip_layer_names(self):
-        return self.quant_config.quant_algo_info.get("ignore_layers", [])
-
-    def get_model(self):
-        return self.model

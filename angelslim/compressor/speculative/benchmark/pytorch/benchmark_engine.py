@@ -25,7 +25,11 @@ from transformers import AutoTokenizer
 from angelslim.utils.lazy_imports import fastchat, ray
 
 from .generate_baseline_answer import get_model_answers as get_baseline_answers
+from .generate_baseline_answer import get_tts_answers as get_tts_baseline_answers
+from .generate_baseline_answer import get_tts_audios as get_tts_baseline_audios
 from .generate_eagle_answer import get_model_answers as get_eagle_answers
+from .generate_eagle_answer import get_tts_answers as get_tts_eagle_answers
+from .generate_eagle_answer import get_tts_audios as get_tts_eagle_audios
 
 
 class BenchmarkMode(Enum):
@@ -57,6 +61,7 @@ class BenchmarkConfig:
     total_token: int = 60
     depth: int = 5
     top_k: int = 10
+    top_p: float = 1.0
 
     # Hardware settings
     num_gpus_per_model: int = 1
@@ -72,6 +77,13 @@ class BenchmarkConfig:
 
     # SpecExit
     early_stop_method: Optional[str] = None
+
+    # Batch settings
+    batch_size: int = 1
+
+    # TTS settings
+    is_tts: bool = False
+    generate_audio: bool = False
 
 
 class BenchmarkEngine:
@@ -93,15 +105,11 @@ class BenchmarkEngine:
 
         # Setup result file paths
         model_id_temp = f"{self.config.model_id}-temperature-{self.config.temperature}"
-        self.eagle_file = os.path.join(
-            self.config.output_dir, f"{model_id_temp}-eagle.jsonl"
-        )
+        self.eagle_file = os.path.join(self.config.output_dir, f"{model_id_temp}-eagle.jsonl")
         self.baseline_file = os.path.join(
             self.config.output_dir, f"{model_id_temp}-baseline.jsonl"
         )
-        self.analysis_file = os.path.join(
-            self.config.output_dir, f"{model_id_temp}-analysis.json"
-        )
+        self.analysis_file = os.path.join(self.config.output_dir, f"{model_id_temp}-analysis.json")
 
     def run_benchmark(self, mode: BenchmarkMode = BenchmarkMode.BOTH) -> Dict[str, Any]:
         """
@@ -154,9 +162,7 @@ class BenchmarkEngine:
 
         use_ray = self.config.num_gpus_total // self.config.num_gpus_per_model > 1
         get_answers_func = (
-            ray.remote(num_gpus=self.config.num_gpus_per_model)(
-                get_eagle_answers
-            ).remote
+            ray.remote(num_gpus=self.config.num_gpus_per_model)(get_eagle_answers).remote
             if use_ray
             else get_eagle_answers
         )
@@ -194,9 +200,7 @@ class BenchmarkEngine:
 
         use_ray = self.config.num_gpus_total // self.config.num_gpus_per_model > 1
         get_answers_func = (
-            ray.remote(num_gpus=self.config.num_gpus_per_model)(
-                get_baseline_answers
-            ).remote
+            ray.remote(num_gpus=self.config.num_gpus_per_model)(get_baseline_answers).remote
             if use_ray
             else get_baseline_answers
         )
@@ -228,9 +232,7 @@ class BenchmarkEngine:
 
         # Calculate acceptance length from Eagle results
         if os.path.exists(self.eagle_file):
-            metrics["acceptance_length"] = self._calculate_acceptance_length(
-                self.eagle_file
-            )
+            metrics["acceptance_length"] = self._calculate_acceptance_length(self.eagle_file)
 
         # Calculate speedup ratio if both files exist
         if os.path.exists(self.eagle_file) and os.path.exists(self.baseline_file):
@@ -339,15 +341,17 @@ class BenchmarkEngine:
 
         args.early_stop_method = self.config.early_stop_method
 
+        # TTS settings
+        args.is_tts = self.config.is_tts
+        args.generate_audio = self.config.generate_audio
+
         return args
 
     def _get_question_file_path(self) -> str:
         """Get question file path"""
         current_file = os.path.abspath(__file__)
         project_root = current_file.split("/AngelSlim/")[0] + "/AngelSlim"
-        return os.path.join(
-            project_root, "dataset", self.config.bench_name, "question.jsonl"
-        )
+        return os.path.join(project_root, "dataset", self.config.bench_name, "question.jsonl")
 
     def _reorg_answer_file(self, answer_file: str):
         """Sort answers by question id and remove duplicates"""
@@ -372,14 +376,11 @@ class BenchmarkEngine:
             return "No benchmark results available."
 
         summary = [
-            "=== Speculative Decoding "
-            f"{self.config.bench_name.upper()} Benchmark Results ===\n"
+            "=== Speculative Decoding " f"{self.config.bench_name.upper()} Benchmark Results ===\n"
         ]
 
         if "acceptance_length" in self.results:
-            summary.append(
-                f"Average Acceptance Length: {self.results['acceptance_length']:.2f}"
-            )
+            summary.append(f"Average Acceptance Length: {self.results['acceptance_length']:.2f}")
 
         if "speedup_ratio" in self.results:
             summary.append(f"Speedup Ratio: {self.results['speedup_ratio']:.2f}x")
@@ -393,3 +394,113 @@ class BenchmarkEngine:
         summary.append(f"Analysis Report: {self.analysis_file}")
 
         return "\n".join(summary)
+
+
+class TTSBenchmarkEngine(BenchmarkEngine):
+    """Core benchmark engine for speculative decoding evaluation"""
+
+    def _run_eagle_benchmark(self):
+        """Run Eagle speculative decoding benchmark"""
+        args = self._create_args_namespace("eagle")
+
+        questions = fastchat.llm_judge.common.load_questions(
+            self._get_question_file_path(),
+            self.config.question_begin,
+            self.config.question_end,
+        )
+
+        use_ray = self.config.num_gpus_total // self.config.num_gpus_per_model > 1
+        get_answers_func = (
+            ray.remote(num_gpus=self.config.num_gpus_per_model)(get_tts_eagle_answers).remote
+            if use_ray
+            else get_tts_eagle_answers
+        )
+
+        chunk_size = len(questions) // (
+            self.config.num_gpus_total // self.config.num_gpus_per_model
+        )
+        ans_handles = [
+            get_answers_func(
+                f"{self.config.model_id}-temperature-{self.config.temperature}",
+                questions[i : i + chunk_size],
+                self.eagle_file,
+                self.config.num_choices,
+                self.config.temperature,
+                args,
+            )
+            for i in range(0, len(questions), chunk_size)
+        ]
+
+        if use_ray:
+            ray.get(ans_handles)
+
+        self._reorg_answer_file(self.eagle_file)
+        self.results["eagle_file"] = self.eagle_file
+
+        if self.config.generate_audio:
+            self._generate_audio("eagle")
+
+    def _run_baseline_benchmark(self):
+        """Run baseline benchmark"""
+        args = self._create_args_namespace("baseline")
+
+        questions = fastchat.llm_judge.common.load_questions(
+            self._get_question_file_path(),
+            self.config.question_begin,
+            self.config.question_end,
+        )
+
+        use_ray = self.config.num_gpus_total // self.config.num_gpus_per_model > 1
+        get_answers_func = (
+            ray.remote(num_gpus=self.config.num_gpus_per_model)(get_tts_baseline_answers).remote
+            if use_ray
+            else get_tts_baseline_answers
+        )
+
+        chunk_size = len(questions) // (
+            self.config.num_gpus_total // self.config.num_gpus_per_model
+        )
+        ans_handles = [
+            get_answers_func(
+                f"{self.config.model_id}-temperature-{self.config.temperature}",
+                questions[i : i + chunk_size],
+                self.baseline_file,
+                self.config.num_choices,
+                self.config.temperature,
+                args,
+            )
+            for i in range(0, len(questions), chunk_size)
+        ]
+
+        if use_ray:
+            ray.get(ans_handles)
+
+        self._reorg_answer_file(self.baseline_file)
+        self.results["baseline_file"] = self.baseline_file
+
+        if self.config.generate_audio:
+            self._generate_audio("baseline")
+
+    def _calculate_metrics(self) -> Dict[str, Any]:
+        """Calculate acceptance length and speedup ratio"""
+        metrics = {}
+
+        # Calculate acceptance length from Eagle results
+        if os.path.exists(self.eagle_file):
+            metrics["acceptance_length"] = self._calculate_acceptance_length(self.eagle_file)
+
+        return metrics
+
+    def _generate_audio(self, mode):
+        args = self._create_args_namespace(mode)
+
+        answers = fastchat.llm_judge.common.load_questions(
+            args.answer_file,
+            self.config.question_begin,
+            self.config.question_end,
+        )
+
+        if mode == "baseline":
+            get_tts_baseline_audios(answers, args.answer_file, args)
+        else:
+            get_tts_eagle_audios(answers, args.answer_file, args)
