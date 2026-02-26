@@ -1031,12 +1031,11 @@ The code for this project is open-sourced under the [License for AngelSlim](LICE
 ## 🔗 Citation
 
 ```
-@software{AngelSlim2025,
-    title={{AngelSlim}},
-    author={Tencent AngelSlim Project Contributors},
-    year={2025},
-    month={6},
-    url={https://github.com/Tencent/AngelSlim},
+@article{angelslim2026,
+  title={AngelSlim: A more accessible, comprehensive, and efficient toolkit for large model compression},
+  author={Hunyuan AI Infra Team},
+  journal={arXiv preprint arXiv:2602.21233},
+  year={2026}
 }
 ```
 
