@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from ....utils import print_info
 from ..observers import ParentObserver, PTQObserver
 from .quant_func import get_fp_maxval, get_fp_search_maxval
 
@@ -29,7 +30,9 @@ class PTQHook:
         self.kv_names = []
 
     def apply_hook(self):
+        print_info("Searching observer layers...")
         self.quant_layers_dict = self.quant_model.get_observer_layers()
+        print_info(f"Find {len(self.quant_layers_dict)} quant layers.")
         self.kv_names = self.quant_model.get_kvcache_observer_layers_names(
             self.quant_layers_dict.keys()
         )
@@ -51,13 +54,24 @@ class PTQHook:
                 sub_layer,
                 act_observer,
                 weight_observer,
-                kv_cache_observer if name in self.kv_names else None,
+                # kv_cache_observer is now handled by monkey patching at attention level
+                # so we pass None here
+                None,
                 self.quant_model.quant_algo_dict,
-                **extra_kwargs
+                **extra_kwargs,
             )
             forward_hook_handle = sub_layer.register_forward_hook(self._forward_hook)
             self.observer_dict[sub_layer] = observer
             self._forward_hook_list.append(forward_hook_handle)
+        print_info(f"Applied {len(self.observer_dict)} observers.")
+
+        # Apply KV cache observers using monkey patching (for attention-level observation)
+        if kv_cache_observer is not None and hasattr(self.quant_model, "apply_kvcache_observers"):
+            quant_bits = self.quant_model.quant_algo_dict.get("c_quant_bits", 8)
+            self.quant_model.apply_kvcache_observers(
+                kv_cache_observer_class=kv_cache_observer,
+                quant_bits=quant_bits,
+            )
 
     def apply_smooth_hook(self, smooth_mapping_layers, smooth_observer):
         for smooth_layer, _ in smooth_mapping_layers.values():
@@ -86,6 +100,9 @@ class PTQHook:
         for hook in self._forward_hook_list:
             hook.remove()
         self._forward_hook_list = []
+        # Remove KV cache observer patches if available
+        if hasattr(self.quant_model, "remove_kvcache_observers"):
+            self.quant_model.remove_kvcache_observers()
 
     def post_process(self):
         maxval = get_fp_maxval(bits=8)
@@ -109,5 +126,8 @@ class PTQHook:
                                 self.quant_model.act_scales_dict[name] / maxval.type(act_dtype)
                             )
         if self.quant_model.quant_algo_dict["c_quant_algo"] == "fp8":
-            for k, v in self.quant_model.kv_cache_scales_dict.items():
-                self.quant_model.kv_cache_scales_dict[k] = v / maxval.type(v.dtype)
+            # Process KV cache scales from attention-level observers
+            if hasattr(self.quant_model, "get_kvcache_scales"):
+                kv_scales = self.quant_model.get_kvcache_scales()
+                for k, v in kv_scales.items():
+                    self.quant_model.kv_cache_scales_dict[k] = v / maxval.type(v.dtype)

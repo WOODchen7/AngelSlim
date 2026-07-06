@@ -24,7 +24,14 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from ..compressor.quant.core import QuantConfig
 from ..compressor.quant.modules import NVFP4QDQModule, QDQModule
-from ..utils import common_prefix, print_info
+from ..utils import (
+    common_prefix,
+    decide_device_for_distributed,
+    is_deepspeed_zero3_enabled,
+    print_info,
+    stream_load_weights,
+    zero3_empty_model_from_pretrained,
+)
 
 __all__ = ["BaseLLMModel"]
 
@@ -51,6 +58,8 @@ class BaseLLMModel(metaclass=ABCMeta):
         self.modal_type = "LLM"
         self.pre_transformer_module_names = ["model.embed_tokens"]
         self.observer_layer_classes = [torch.nn.Linear]
+        # Store original forward methods for restoration
+        self._original_attn_forwards = {}
 
     def from_pretrained(
         self,
@@ -61,20 +70,48 @@ class BaseLLMModel(metaclass=ABCMeta):
         low_cpu_mem_usage=True,
         use_cache=False,
         using_multi_nodes=False,
+        attn_implementation="default",
     ):
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_path,
+        # DeepSpeed ZeRO-3 path: build an empty sharded model on every rank
+        # via deepspeed.zero.Init, linearize fused MoE experts, then stream
+        # the safetensors checkpoint into the (sharded) parameters. This
+        # avoids HF's path that materialises the full state_dict on every
+        # rank's CPU before sharding.
+        if is_deepspeed_zero3_enabled():
+            log_prefix = f"[{type(self).__name__}.from_pretrained]"
+            self.model = zero3_empty_model_from_pretrained(
+                model_path,
+                torch_dtype=torch_dtype,
+                trust_remote_code=trust_remote_code,
+                use_cache=use_cache,
+                attn_implementation=attn_implementation,
+                log_prefix=log_prefix,
+            )
+            stream_load_weights(self.model, model_path, log_prefix=log_prefix)
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                model_path, trust_remote_code=trust_remote_code
+            )
+            return
+
+        kwargs = dict(
             torch_dtype=torch_dtype,
             device_map=device_map,
             trust_remote_code=trust_remote_code,
             low_cpu_mem_usage=low_cpu_mem_usage,
             use_cache=use_cache,
         )
+        if attn_implementation != "default":
+            kwargs["attn_implementation"] = attn_implementation
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            **kwargs,
+        )
 
         # Load tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_path, trust_remote_code=trust_remote_code
         )
+        print_info("Finish load model.")
 
     def init_ptq(self, slim_config):
         """
@@ -84,6 +121,7 @@ class BaseLLMModel(metaclass=ABCMeta):
                 - compress_config: the configuration for compression.
                 - global_config: the global configuration for the model.
         """
+
         quant_config = QuantConfig(slim_config["compress_config"], slim_config["global_config"])
         self.quant_config = quant_config
         self.act_scales_dict = {}
@@ -110,6 +148,59 @@ class BaseLLMModel(metaclass=ABCMeta):
     def get_model(self):
         return self.model
 
+    def get_checkpoint_key_conversions(self, include_converters=True):
+        try:
+            from transformers.conversion_mapping import get_model_conversion_mapping
+            from transformers.core_model_loading import WeightConverter, WeightRenaming
+        except ImportError:
+            return [], []
+
+        if self.model is None:
+            return [], []
+
+        weight_conversions = get_model_conversion_mapping(self.model, add_legacy=False) or []
+        renamings = [entry for entry in weight_conversions if isinstance(entry, WeightRenaming)]
+        converters = [entry for entry in weight_conversions if isinstance(entry, WeightConverter)]
+        if not include_converters:
+            converters = []
+        return renamings, converters
+
+    def resolve_checkpoint_key_for_model(
+        self,
+        key,
+        target_state_dict=None,
+        weight_renamings=None,
+        weight_converters=None,
+    ):
+        try:
+            from transformers.core_model_loading import rename_source_key
+        except ImportError:
+            return key
+
+        if weight_renamings is None or weight_converters is None:
+            weight_renamings, weight_converters = self.get_checkpoint_key_conversions()
+
+        prefix = getattr(self.model, "base_model_prefix", None) if self.model is not None else None
+        renamed_key, _ = rename_source_key(
+            key,
+            weight_renamings,
+            weight_converters,
+            prefix,
+            target_state_dict,
+        )
+        return renamed_key
+
+    def format_state_dict_for_save(self, state_dict):
+        try:
+            from transformers.core_model_loading import revert_weight_conversion
+        except ImportError:
+            return state_dict
+
+        if self.model is None or getattr(self.model, "_weight_conversions", None) is None:
+            return state_dict
+
+        return revert_weight_conversion(self.model, state_dict)
+
     def get_quant_module(self):
         """
         Returns the module that will be quantized.
@@ -130,6 +221,16 @@ class BaseLLMModel(metaclass=ABCMeta):
             act_scale = self.act_scales_dict[name]
         if name in self.weight_scales_dict:
             weight_scale = self.weight_scales_dict[name]
+
+        if hasattr(self.quant_config.quant_algo_info, "w_group_size"):
+            self.group_size = self.quant_config.quant_algo_info.w_group_size
+        elif hasattr(self.quant_config.quant_algo_info, "group_size"):
+            self.group_size = self.quant_config.quant_algo_info.group_size
+        else:
+            self.group_size = 128
+
+        print_info(f"use weight group size {self.group_size}")
+
         if self.deploy_backend in ["vllm", "huggingface", "trtllm", "tensorrt"]:
             q_linear = QDQModule(
                 quant_algo=self.quant_config.quant_algo,
@@ -137,6 +238,7 @@ class BaseLLMModel(metaclass=ABCMeta):
                 weight_scale=weight_scale,
                 bias=sub_layer.bias,
                 input_scale=act_scale,
+                group_size=self.group_size,
             )
         else:
             print_info("current {} deploy_backend not support".format(self.deploy_backend))
@@ -173,6 +275,37 @@ class BaseLLMModel(metaclass=ABCMeta):
         self.weight_observer_amax_dict = copy.deepcopy(self.weight_scales_dict)
         self.input_observer_amax_dict = copy.deepcopy(self.act_scales_dict)
 
+    def fuse_observer_amax_weight_only(self, name):
+        """Fuse weight observer amax for weight-only quantization.
+
+        For gate_proj/up_proj pairs (and qkv groups), returns the max amax
+        across the group so they share the same weight_scale_2, matching
+        vLLM's fused gate_up_proj kernel expectation.
+        """
+        if "gate_proj" in name or "up_proj" in name:
+            prefix = name.rsplit(".", 1)[0]
+            gate_name = f"{prefix}.gate_proj"
+            up_name = f"{prefix}.up_proj"
+
+            weight_scales = []
+            for key in [gate_name, up_name]:
+                if key in self.weight_observer_amax_dict:
+                    weight_scales.append(self.weight_observer_amax_dict[key])
+            if weight_scales:
+                return max(weight_scales)
+        elif "q_proj" in name or "k_proj" in name or "v_proj" in name:
+            prefix = name.rsplit(".", 1)[0]
+            qkv_names = [f"{prefix}.q_proj", f"{prefix}.k_proj", f"{prefix}.v_proj"]
+
+            weight_scales = []
+            for key in qkv_names:
+                if key in self.weight_observer_amax_dict:
+                    weight_scales.append(self.weight_observer_amax_dict[key])
+            if weight_scales:
+                return max(weight_scales)
+
+        return self.weight_observer_amax_dict[name]
+
     def get_kvcache_observer_layers_names(self, observe_names):
         names = ["self_attn.k_proj", "self_attn.v_proj"]
         return [
@@ -180,6 +313,9 @@ class BaseLLMModel(metaclass=ABCMeta):
             for k in observe_names
             if k.startswith(self.block_name) and k.split(".")[-2] + "." + k.split(".")[-1] in names
         ]
+
+    def patch_fp8_attention(self):
+        print_info("Warning: patch_fp8_attention not implemented for this model, skipping")
 
     def get_quant_config(self):
         assert self.quant_config is not None
@@ -263,7 +399,7 @@ class BaseLLMModel(metaclass=ABCMeta):
             or "awq" in self.quant_config.quant_algo
             or "gptaq" in self.quant_config.quant_algo
         ):
-            device = "cuda:0"
+            device = decide_device_for_distributed()
         else:
             device = self.model.device
 
@@ -333,6 +469,58 @@ class BaseLLMModel(metaclass=ABCMeta):
 
         return smooth_mapping_layers
 
+    def get_rotation_mapping_layers(
+        self, transform_config, linear_mapping=None, norm_mapping=None
+    ):
+
+        if linear_mapping:
+            targets, ignore = linear_mapping
+            linear_mapping_layers = {}
+            for name, module in self.model.named_modules():
+                for target in targets:
+                    if name.split(".")[-1] == target:
+                        if not any(name.endswith(ig) for ig in ignore):
+                            linear_mapping_layers[name] = module
+                        break
+            return linear_mapping_layers
+
+        if norm_mapping:
+            norm_mapping_layers = {}
+
+            for to_linear_list, to_norm in norm_mapping:
+                for norm_name, norm_layer in self.model.named_modules():
+                    if norm_name.split(".")[-1] != to_norm:
+                        continue
+                    linear_layers_list = []
+
+                    for to_linear in to_linear_list:
+                        longest_prefix = 0
+                        linear_layers = []
+
+                        # use common_prefix to support moe experts
+                        for name, layer in self.model.named_modules():
+                            if name.split(".")[-1] != to_linear:
+                                continue
+                            prefix = common_prefix(name, norm_name)
+                            if prefix.count(".") < longest_prefix:
+                                continue
+                            elif prefix.count(".") == longest_prefix:
+                                linear_layers.append((name, layer))
+                            else:
+                                longest_prefix = prefix.count(".")
+                                linear_layers = [(name, layer)]
+
+                        if linear_layers:
+                            linear_layers_list.extend(linear_layers)
+
+                    if linear_layers_list:
+                        norm_mapping_layers[norm_name] = (
+                            norm_layer,
+                            linear_layers_list,
+                        )
+
+            return norm_mapping_layers
+
     def get_parent_dict(self, observer_layers_dict):
         return {}
 
@@ -342,4 +530,4 @@ class BaseLLMModel(metaclass=ABCMeta):
         return weight_observer.scales()
 
     def __getattr__(self, item):
-        return super().__getattr__(item)
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{item}'")

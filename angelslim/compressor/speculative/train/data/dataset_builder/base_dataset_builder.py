@@ -29,7 +29,12 @@ from ..chat_templates import ChatTemplateType, template_manager
 class DatasetBuilder(metaclass=ABCMeta):
     @abstractmethod
     def build_dataset(
-        self, datapath: str, num_proc: int = 8, shuffle: bool = True, **kwargs
+        self,
+        datapath: str,
+        num_proc: int = 8,
+        shuffle: bool = True,
+        min_loss_tokens: Optional[int] = None,
+        **kwargs,
     ) -> Dataset:
         pass
 
@@ -127,6 +132,7 @@ class OnlineDatasetBuilder(DatasetBuilder):
         num_proc: int = 8,
         shuffle: bool = True,
         sample_num: Optional[int] = None,
+        min_loss_tokens: Optional[int] = None,
     ) -> Dataset:
         try:
             # Load dataset
@@ -161,6 +167,18 @@ class OnlineDatasetBuilder(DatasetBuilder):
                 num_proc=num_proc,
                 desc="Filtering empty input_ids",
             )
+
+            if min_loss_tokens is not None:
+                processed_ds = processed_ds.filter(
+                    lambda batch: [
+                        sum(sum(x) if isinstance(x, list) else x for x in m) >= min_loss_tokens
+                        for m in batch["loss_mask"]
+                    ],
+                    batched=True,
+                    num_proc=num_proc,
+                    desc=f"Filtering sequences with loss tokens < {min_loss_tokens}",
+                )
+
             processed_ds.set_format(type="torch")
 
             return processed_ds
@@ -306,6 +324,24 @@ class OnlineDatasetBuilder(DatasetBuilder):
                     loss_mask[idx] = 1
 
         return loss_mask
+
+    @staticmethod
+    def _normalize_content(content):
+        """Normalize content to string format.
+
+        If content is a list (multimodal format like [{"type": "text", "text": "..."}]),
+        extract and concatenate all text items into a single string.
+        This ensures LLM mode can handle data in multimodal format.
+        """
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            text_parts = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text" and item.get("text"):
+                    text_parts.append(item["text"])
+            return "".join(text_parts) if text_parts else ""
+        return content
 
     def _build_messages(self, source: List[Dict]) -> List[Dict]:
         # System message

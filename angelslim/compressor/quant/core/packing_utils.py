@@ -40,6 +40,25 @@ def unpack_awq(qweight: torch.Tensor, qzeros: torch.Tensor, bits: int):
     return iweights, izeros
 
 
+def unpack_weight_omni(qweight: torch.Tensor, save_bit: int = 4, pack_bit: int = 8):
+    assert pack_bit % save_bit == 0, "pack_bit must be divisible by save_bit"
+    mask = (1 << save_bit) - 1  # e.g. 0x0F for 4-bit
+    sign_bit = 1 << (save_bit - 1)  # e.g. 0x08 for 4-bit
+    shifts = torch.arange(0, pack_bit, save_bit, device=qweight.device)
+    qweight = qweight.to(torch.int32)
+    # Extract each sub-value and apply sign extension
+    # bitwise_right_shift is arithmetic, so the highest slot (last shift) is already
+    # sign-extended correctly; all other slots need masking + manual sign extension.
+    iweights = torch.bitwise_right_shift(qweight[:, :, None], shifts[None, None, :]).to(
+        torch.int32
+    )
+    # Mask off upper bits and sign-extend for all slots except the topmost
+    iweights = iweights & mask  # isolate save_bit bits
+    iweights = iweights - ((iweights & sign_bit) << 1)  # sign extend
+    iweights = iweights.reshape(iweights.shape[0], -1)
+    return iweights
+
+
 def reverse_awq_order(iweights: torch.Tensor, izeros: torch.Tensor, bits: int):
     reverse_order_tensor = torch.arange(
         iweights.shape[-1],
@@ -109,8 +128,20 @@ def dequantize_gemm(qweight, qzeros, scales, bits, group_size):
 
 
 def pack_weight_to_int8(weight):
+    """Pack two INT4 values into one INT8 byte (CPU, numpy-based).
+
+    Original implementation using Python loops for packing.
+    Kept for debugging and fallback.
+    For GPU-accelerated packing, use pack_weight_to_int8_gpu.
+
+    Args:
+        weight: Tensor of shape (out_features, in_features) with values in [-8, 7].
+
+    Returns:
+        Packed INT8 tensor of shape (out_features, in_features // 2) on CPU.
+    """
     weight = weight.t().contiguous().cpu()
-    weight = weight.to(torch.float32).numpy().astype(np.int8)
+    weight = weight.to(torch.float32).detach().numpy().astype(np.int8)
 
     i = 0
     row = 0
@@ -123,4 +154,35 @@ def pack_weight_to_int8(weight):
 
     packed_weight = packed_weight.astype(np.int8)
     packed_weight = torch.from_numpy(packed_weight).t().contiguous()
+    return packed_weight
+
+
+def pack_weight_to_int8_gpu(weight):
+    """Pack two INT4 values into one INT8 byte using pure PyTorch (GPU-accelerated).
+
+    Supports both CPU and GPU tensors — no numpy dependency, so packing
+    can be done directly on GPU without device transfer overhead.
+
+    Input layout (after transpose): rows are paired (row 0,1 -> packed row 0, etc.)
+    Low nibble = even row, high nibble = odd row.
+
+    Args:
+        weight: Tensor of shape (out_features, in_features) with values in [-8, 7].
+            Can be on any device (CPU or CUDA).
+
+    Returns:
+        Packed INT8 tensor of shape (out_features, in_features // 2),
+        on the same device as input.
+    """
+    # Transpose to (in_features, out_features) for row-pair packing
+    weight = weight.t().contiguous().to(torch.int8)
+
+    # Vectorized packing: pair adjacent rows and combine low/high nibbles
+    # Even rows -> low nibble, odd rows -> high nibble
+    even_rows = weight[0::2]  # shape: (rows//2, cols)
+    odd_rows = weight[1::2]  # shape: (rows//2, cols)
+    packed_weight = (even_rows & 0x0F) | ((odd_rows & 0x0F) << 4)
+
+    # Transpose back to (out_features, in_features // 2)
+    packed_weight = packed_weight.t().contiguous()
     return packed_weight
